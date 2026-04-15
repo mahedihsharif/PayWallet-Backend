@@ -8,7 +8,7 @@ import {
 import { User } from "../modules/auth/auth.model";
 import { Role } from "../modules/auth/auth.types";
 import { Wallet } from "../modules/wallet/wallet.model";
-import { env } from "./env";
+import env from "./env.config";
 
 export const isGoogleOAuthConfigured = Boolean(
   env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_CALLBACK_URL,

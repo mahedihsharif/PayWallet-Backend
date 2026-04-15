@@ -1,8 +1,8 @@
 import { NextFunction, Request, Response, Router } from "express";
 import httpStatus from "http-status-codes";
 import passport from "passport";
-import { env } from "../../config/env";
-import { isGoogleOAuthConfigured } from "../../config/passport";
+import env from "../../config/env.config";
+import { isGoogleOAuthConfigured } from "../../config/passport.config";
 import AppError from "../../errorHelpers/AppError";
 import { checkAuth } from "../../middlewares/checkAuth";
 import validateRequest from "../../middlewares/validateRequest";

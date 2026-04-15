@@ -1,9 +1,9 @@
 import httpStatus from "http-status-codes";
 import { JwtPayload } from "jsonwebtoken";
+import { env } from "../config/env.config";
 import AppError from "../errorHelpers/AppError";
 import { User } from "../modules/auth/auth.model";
 import { IRegister } from "../modules/auth/auth.types";
-import { env } from "./../config/env";
 import { generateToken, verifyToken } from "./jwt";
 
 export const createUserTokens = (user: Partial<IRegister>) => {

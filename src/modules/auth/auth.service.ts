@@ -1,6 +1,6 @@
 import bcrypt from "bcrypt";
 import httpStatus from "http-status-codes";
-import { env } from "../../config/env";
+import { env } from "../../config/env.config";
 import AppError from "../../errorHelpers/AppError";
 import { createUserTokens } from "../../utils/userTokens";
 import { Wallet } from "../wallet/wallet.model";

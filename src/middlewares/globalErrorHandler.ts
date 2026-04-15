@@ -1,11 +1,11 @@
 import { NextFunction, Request, Response } from "express";
+import { env } from "../config/env.config";
 import AppError from "../errorHelpers/AppError";
 import handleCastError from "../helpers/handleCastError";
 import handleDuplicateError from "../helpers/handleDuplicateError";
 import handleValidationError from "../helpers/handleValidationError";
 import handleZodError from "../helpers/handleZodError";
 import { TErrorSources } from "../types/error.types";
-import { env } from "./../config/env";
 
 const globalErrorHandler = async (
   err: any,
