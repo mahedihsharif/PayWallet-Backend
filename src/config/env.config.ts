@@ -16,7 +16,7 @@ const envSchema = z.object({
   MONGODB_URI: z.url({ message: "MONGODB_URI must be a valid URL" }),
 
   // Redis
-  // REDIS_URL: z.url({ message: "REDIS_URL must be a valid URL" }),
+  REDIS_URL: z.url({ message: "REDIS_URL must be a valid URL" }),
 
   // JWT
   JWT_ACCESS_SECRET: z

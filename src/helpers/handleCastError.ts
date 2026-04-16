@@ -1,10 +1,10 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import httpStatus from "http-status-codes";
 import mongoose from "mongoose";
-import { TGenericErrorResponse } from "../interface/error.types";
+import { TGenericErrorResponse } from "../types/error.types";
 
 const handleCastError = (
-  err: mongoose.Error.CastError
+  err: mongoose.Error.CastError,
 ): TGenericErrorResponse => {
   return {
     statusCode: httpStatus.BAD_REQUEST,

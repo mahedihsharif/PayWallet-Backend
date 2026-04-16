@@ -5,6 +5,8 @@ interface TMeta {
   limit: number;
   totalPage: number;
   total: number;
+  nextCursor?: string | null;
+  hasMore?: boolean;
 }
 
 interface TResponse<T> {

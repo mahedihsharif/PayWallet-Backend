@@ -5,6 +5,8 @@ import {
   VerifyCallback,
 } from "passport-google-oauth20";
 
+import mongoose from "mongoose";
+
 import { User } from "../modules/auth/auth.model";
 import { Role } from "../modules/auth/auth.types";
 import { Wallet } from "../modules/wallet/wallet.model";
@@ -29,39 +31,83 @@ if (isGoogleOAuthConfigured) {
         profile: Profile,
         done: VerifyCallback,
       ) => {
+        const session = await mongoose.startSession();
+
         try {
-          const email = profile.emails?.[0].value;
+          session.startTransaction();
+
+          const email = profile.emails?.[0]?.value?.toLowerCase();
+
           if (!email) {
+            await session.abortTransaction();
             return done(null, false, { message: "No Email Found!" });
           }
-          let isUserExist = await User.findOne({ email });
+
+          let isUserExist = await User.findOne({ email }).session(session);
+
+          // blocked user
           if (isUserExist && isUserExist.isBlocked) {
+            await session.abortTransaction();
             return done(null, false, { message: "User is blocked" });
           }
 
+          // user not exist → create
           if (!isUserExist) {
-            isUserExist = await User.create({
-              email,
-              name: profile.displayName,
-              // picture: profile.photos?.[0].value,
-              role: Role.USER,
-
-              auths: [
+            const createdUser = await User.create(
+              [
                 {
-                  provider: "google",
-                  providerId: profile.id,
+                  email,
+                  name: profile.displayName,
+                  // picture: profile.photos?.[0]?.value,
+                  role: Role.USER,
+                  auths: [
+                    {
+                      provider: "google",
+                      providerId: profile.id,
+                    },
+                  ],
                 },
               ],
-            });
-            // create wallet automatically
-            await Wallet.create({
-              userId: isUserExist._id,
-            });
+              { session },
+            );
+
+            isUserExist = createdUser[0];
+
+            // create wallet
+            await Wallet.create(
+              [
+                {
+                  userId: isUserExist._id,
+                },
+              ],
+              { session },
+            );
           }
+
+          // user exist but google not linked
+          else {
+            const hasGoogleAuth = isUserExist.auths?.some(
+              (auth) => auth.provider === "google",
+            );
+
+            if (!hasGoogleAuth) {
+              isUserExist.auths.push({
+                provider: "google",
+                providerId: profile.id,
+              });
+
+              await isUserExist.save({ session });
+            }
+          }
+
+          await session.commitTransaction();
 
           return done(null, isUserExist);
         } catch (error) {
-          return done(error);
+          await session.abortTransaction();
+          return done(error as any);
+        } finally {
+          session.endSession();
         }
       },
     ),
@@ -72,13 +118,20 @@ if (isGoogleOAuthConfigured) {
   );
 }
 
+// serialize user
 passport.serializeUser((user: any, done: (err: any, id?: unknown) => void) => {
-  done(null, user._id);
+  done(null, user._id.toString());
 });
 
+// deserialize user
 passport.deserializeUser(async (id: string, done: any) => {
   try {
-    const user = await User.findById(id);
+    const user = await User.findById(id).lean();
+
+    if (!user) {
+      return done(null, false);
+    }
+
     done(null, user);
   } catch (error) {
     done(error);

@@ -21,6 +21,7 @@ const freezeWallet = async (userId: string) => {
     { status: Status.FROZEN },
     { new: true },
   );
+
   return {
     data: wallet,
   };

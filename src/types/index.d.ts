@@ -1,9 +1,15 @@
-import { JwtPayload } from "jsonwebtoken";
+import { IUser } from "../modules/user/user.model";
+import { IWallet } from "../modules/wallet/wallet.model";
 
 declare global {
   namespace Express {
-    interface User extends JwtPayload {}
+    interface Request {
+      user?: Pick<
+        IUser,
+        "_id" | "fullName" | "email" | "phone" | "role" | "status"
+      >;
+      wallet?: IWallet;
+      requestId?: string; // Unique ID per request (for log correlation)
+    }
   }
 }
-
-export {};

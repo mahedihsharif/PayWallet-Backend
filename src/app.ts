@@ -1,5 +1,11 @@
+import { corsOptions } from "@config/cors.config";
+import logger from "@config/logger.config";
+import { globalLimiter } from "@middlewares/rateLimiter.middleware";
+import compression from "compression";
+import cookieParser from "cookie-parser";
 import cors from "cors";
-import express, { Request, Response } from "express";
+import crypto from "crypto";
+import express, { Application, NextFunction, Request, Response } from "express";
 import expressSession from "express-session";
 import helmet from "helmet";
 import morgan from "morgan";
@@ -10,29 +16,94 @@ import globalErrorHandler from "./middlewares/globalErrorHandler";
 import notFound from "./middlewares/notFound";
 import { router } from "./routes";
 
-const app = express();
+const app: Application = express();
+// ─── 1. Security headers (Helmet) — always first ──────────────────
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
+        imgSrc: ["'self'", "data:", "https://res.cloudinary.com"],
+      },
+    },
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  }),
+);
+
+if (env.NODE_ENV === "PRODUCTION") {
+  app.use(
+    helmet.hsts({
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true,
+    }),
+  );
+}
+
+app.use(cors(corsOptions));
+app.options("/{*splat}", cors(corsOptions)); // Handle preflight requests
 
 app.use(
   expressSession({
-    secret: env.EXPRESS_SESSION_SECRET as string,
+    secret: env.EXPRESS_SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
   }),
 );
-app.use(express.json());
-app.use(cors());
-app.use(helmet());
-app.use(morgan("dev"));
+app.use(express.json({ limit: "10kb" }));
+app.use(express.urlencoded({ extended: true, limit: "10kb" }));
+app.use(cookieParser());
 app.use(passport.initialize());
 app.use(passport.session());
 
-app.use("/api/v1", router);
+// ─── 4. Compression ───────────────────────────────────────────────
+app.use(compression());
 
-app.get("/", (req: Request, res: Response) => {
-  res.send("Welcome to the Wallet System Application!");
+// ─── 5. NoSQL injection prevention ────────────────────────────────
+// Strips $ and . from req.body, req.query, req.params
+app.use((req, _res, next) => {
+  const clean = (obj: any) => {
+    if (!obj || typeof obj !== "object") return;
+
+    Object.keys(obj).forEach((key) => {
+      if (key.includes("$") || key.includes(".")) {
+        delete obj[key];
+      }
+    });
+  };
+
+  clean(req.body);
+  clean(req.query);
+  clean(req.params);
+
+  next();
+});
+// ─── 6. Request ID (log correlation) ─────────────────────────────
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  req.requestId =
+    (req.headers["x-request-id"] as string) ?? crypto.randomUUID();
+  next();
 });
 
-app.use(globalErrorHandler);
+// ─── 7. HTTP request logging ──────────────────────────────────────
+if (env.NODE_ENV === "DEVELOPMENT") {
+  // Concise colored output in development
+  app.use(morgan("dev"));
+} else {
+  // Structured JSON logs in production
+  app.use(
+    morgan("combined", {
+      stream: { write: (msg) => logger.http(msg.trim()) },
+      skip: (_req, res) => res.statusCode < 400, // Only log errors in prod
+    }),
+  );
+}
+// ─── 8. Global rate limiter ───────────────────────────────────────
+app.use("/api/v1", globalLimiter);
+app.use("/api/v1", router);
 app.use(notFound);
+app.use(globalErrorHandler);
 
 export default app;

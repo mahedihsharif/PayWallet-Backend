@@ -1,6 +1,6 @@
 import bcrypt from "bcrypt";
 import httpStatus from "http-status-codes";
-import { env } from "../../config/env.config";
+import env from "../../config/env.config";
 import AppError from "../../errorHelpers/AppError";
 import { createUserTokens } from "../../utils/userTokens";
 import { Wallet } from "../wallet/wallet.model";
@@ -46,7 +46,11 @@ const login = async (payload: ILogin) => {
   if (!isUserExist) {
     throw new AppError(httpStatus.BAD_REQUEST, "User doesn't exist!");
   }
-
+  if (!isUserExist.password)
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "Password not set for this account",
+    );
   const isPasswordMatched = await bcrypt.compare(
     password as string,
     isUserExist.password as string,

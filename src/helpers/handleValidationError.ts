@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import httpStatus from "http-status-codes";
-import { TErrorSources, TGenericErrorResponse } from "../interface/error.types";
+import { TErrorSources, TGenericErrorResponse } from "../types/error.types";
 
 const handleValidationError = (err: any): TGenericErrorResponse => {
   const errorSources: TErrorSources[] = [];
@@ -9,7 +9,7 @@ const handleValidationError = (err: any): TGenericErrorResponse => {
     errorSources.push({
       path: errorObject.path,
       message: errorObject.message,
-    })
+    }),
   );
   return {
     statusCode: httpStatus.BAD_REQUEST,

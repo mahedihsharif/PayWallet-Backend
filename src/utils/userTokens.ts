@@ -1,6 +1,6 @@
 import httpStatus from "http-status-codes";
 import { JwtPayload } from "jsonwebtoken";
-import { env } from "../config/env.config";
+import env from "../config/env.config";
 import AppError from "../errorHelpers/AppError";
 import { User } from "../modules/auth/auth.model";
 import { IRegister } from "../modules/auth/auth.types";
@@ -17,13 +17,13 @@ export const createUserTokens = (user: Partial<IRegister>) => {
   const accessToken = generateToken(
     jwtPayload,
     env.JWT_ACCESS_SECRET,
-    env.JWT_ACCESS_EXPIRES,
+    env.JWT_ACCESS_EXPIRES_IN,
   );
 
   const refreshToken = generateToken(
     jwtPayload,
     env.JWT_REFRESH_SECRET,
-    env.JWT_REFRESH_EXPIRES,
+    env.JWT_REFRESH_EXPIRES_IN,
   );
 
   return {
@@ -68,7 +68,7 @@ export const createNewAccessTokenWithRefreshToken = async (
   const accessToken = generateToken(
     jwtPayload,
     env.JWT_ACCESS_SECRET,
-    env.JWT_ACCESS_EXPIRES,
+    env.JWT_ACCESS_EXPIRES_IN,
   );
   return accessToken;
 };

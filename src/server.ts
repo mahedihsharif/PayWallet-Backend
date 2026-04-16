@@ -1,69 +1,108 @@
-import { Server } from "http";
-import mongoose from "mongoose";
+import http from "http";
+import { Server as SocketIOServer } from "socket.io";
+import connectDB from "./config/db.config";
+import logger from "./config/logger.config";
+import redis from "./config/redis.config";
+
+// ─── Import event listeners (registers them on startup) ───────────
+import env from "@config/env.config";
 import app from "./app";
-import env from "./config/env.config";
+import "./events/listeners/transaction.listener";
+import "./events/listeners/user.listener";
 
-let server: Server;
+let httpServer: http.Server;
 
-const startServer = async () => {
+const startServer = async (): Promise<void> => {
   try {
-    await mongoose.connect(env.MONGODB_URI);
-    console.log("Mongodb Connected Successfully!");
-    server = app.listen(env.PORT, () => {
-      console.log(`Server is Listening at Port: ${env.PORT}`);
+    // ─── 1. Connect MongoDB ─────────────────────────────
+    await connectDB();
+
+    // ─── 2. Wait Redis ready ────────────────────────────
+    await redis.connect?.().catch(() => {}); // safe for ioredis
+
+    await redis.ping();
+    logger.info("✅ Redis ping successful.");
+
+    // ─── 3. Create HTTP server ─────────────────────────
+    httpServer = http.createServer(app);
+
+    // ─── 4. Socket.IO ─────────────────────────────────
+    const io = new SocketIOServer(httpServer, {
+      cors: {
+        origin: env.FRONTEND_URL,
+        methods: ["GET", "POST"],
+        credentials: true,
+      },
+      pingTimeout: 60000,
+      pingInterval: 25000,
+    });
+
+    app.locals.io = io;
+
+    io.on("connection", (socket) => {
+      logger.debug(`Socket connected: ${socket.id}`);
+
+      socket.on("join", (userId: string) => {
+        socket.join(`user:${userId}`);
+        logger.debug(`Socket ${socket.id} joined user:${userId}`);
+      });
+
+      socket.on("disconnect", () => {
+        logger.debug(`Socket disconnected: ${socket.id}`);
+      });
+    });
+
+    // ─── 5. Start server ──────────────────────────────
+    httpServer.listen(env.PORT, () => {
+      logger.info(`
+╔═══════════════════════════════════════════╗
+║          PayWallet API Server             ║
+╠═══════════════════════════════════════════╣
+║  Status   : Running                       ║
+║  Port     : ${String(env.PORT).padEnd(30)} ║
+║  Env      : ${env.NODE_ENV.padEnd(30)} ║
+║  API      : /api/v1/health                ║
+╚═══════════════════════════════════════════╝
+`);
     });
   } catch (error) {
-    console.log(error);
+    logger.error("Failed to start server:", error);
+    process.exit(1);
   }
 };
 
-(async () => {
-  await startServer();
-})();
+startServer();
 
-/**
- * unhandled rejection
- * uncaught rejection
- * Signal Terminal Rejection
- */
+// ───────────────── GLOBAL ERROR HANDLERS ─────────────────
 
 process.on("unhandledRejection", (err) => {
-  console.log("Unhandled Rejection Detected...Server Shutting down.", err);
-  if (server) {
-    server.close();
+  logger.error("Unhandled Rejection", err);
+
+  if (httpServer) {
+    httpServer.close(() => process.exit(1));
+  } else {
     process.exit(1);
   }
-  process.exit(1);
 });
 
 process.on("uncaughtException", (err) => {
-  console.log("UnCaught Exception Detected...Server Shutting down.", err);
-  if (server) {
-    server.close();
+  logger.error("Uncaught Exception", err);
+
+  if (httpServer) {
+    httpServer.close(() => process.exit(1));
+  } else {
     process.exit(1);
   }
-  process.exit(1);
 });
 
+// ───────────────── GRACEFUL SHUTDOWN ─────────────────
+
 process.on("SIGTERM", () => {
-  console.log("Signal Terminal Detected...Server Shutting down.");
-  if (server) {
-    server.close();
-    process.exit(1);
-  }
-  process.exit(1);
+  logger.warn("SIGTERM received. Shutting down...");
+  httpServer?.close();
 });
 
 process.on("SIGINT", () => {
-  console.log("SIGINT Detected...Server Shutting down.");
-  if (server) {
-    server.close();
-    process.exit(1);
-  }
-  process.exit(1);
+  logger.warn("SIGINT received. Shutting down...");
+  httpServer?.close();
 });
-
-//unhandled rejection error.
-// Promise.reject(new Error("I forgot to catch the promise"));
-//uncaught detection error
-// throw new Error("I forgot to catch this local error");
