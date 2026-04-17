@@ -27,13 +27,14 @@ const envSchema = z.object({
     .min(32, "JWT_REFRESH_SECRET must be at least 32 chars"),
   JWT_ACCESS_EXPIRES_IN: z.string().default("15m"),
   JWT_REFRESH_EXPIRES_IN: z.string().default("7d"),
-
+  EMAIL_JOB_ATTEMPTS: z.string().default("3").transform(Number),
+  EMAIL_JOB_BACKOFF_DELAY: z.string().default("2000").transform(Number),
   // Email (Nodemailer)
-  // SMTP_HOST: z.string(),
-  // SMTP_PORT: z.string().transform(Number),
-  // SMTP_USER: z.email(),
-  // SMTP_PASS: z.string(),
-  // EMAIL_FROM: z.string().default("PayWallet <noreply@paywallet.com>"),
+  SMTP_HOST: z.string(),
+  SMTP_PORT: z.string().transform(Number),
+  SMTP_USER: z.email(),
+  SMTP_PASS: z.string(),
+  EMAIL_FROM: z.string().default("PayWallet <mahedihsharifs@paywallet.com>"),
 
   //SSL
   // SSL_STORE_ID: z.string(),

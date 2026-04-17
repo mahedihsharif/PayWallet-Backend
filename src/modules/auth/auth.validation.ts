@@ -71,13 +71,11 @@ export const loginSchema = Joi.object({
   password: Joi.string()
     .required()
     .messages({ "any.required": "Password is required" }),
-  deviceId: Joi.string().uuid().required().messages({
+  deviceId: Joi.string().uuid().optional().messages({
     "string.guid": "deviceId must be a valid UUID",
-    "any.required": "deviceId is required",
   }),
-  deviceName: Joi.string().max(100).required().messages({
-    "any.required": "deviceName is required",
-  }),
+
+  deviceName: Joi.string().max(100).optional(),
 });
 
 export const forgotPasswordSchema = Joi.object({

@@ -17,7 +17,7 @@
   "type": "commonjs",
   "dependencies": {
     "bcrypt": "^6.0.0",
-    "bull": "^4.16.5",
+    "bullmq": "^5.12.8",
     "cloudinary": "^1.41.3",
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",

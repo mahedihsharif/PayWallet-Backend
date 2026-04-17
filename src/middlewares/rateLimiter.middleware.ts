@@ -36,16 +36,16 @@ const createRateLimiter = (max: number, windowMs: number, message: string) =>
 
 export const globalLimiter = createRateLimiter(
   CONSTANTS.GLOBAL_RATE_LIMIT,
-  15 * 60 * 1000,
+  2 * 60 * 1000,
   "Too many requests. Please try again in 15 minutes.",
 );
 export const authLimiter = createRateLimiter(
   CONSTANTS.AUTH_RATE_LIMIT,
-  15 * 60 * 1000,
+  2 * 60 * 1000,
   "Too many login attempts. Please wait 15 minutes.",
 );
 export const transactionLimiter = createRateLimiter(
   CONSTANTS.TRANSACTION_RATE_LIMIT,
-  60 * 60 * 1000,
+  2 * 60 * 1000,
   "Transaction rate limit reached. Please try again later.",
 );

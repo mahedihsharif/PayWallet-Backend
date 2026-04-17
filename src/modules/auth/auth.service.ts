@@ -1,73 +1,286 @@
+import logger from "@config/logger.config";
+import redis from "@config/redis.config";
+import eventBus from "@events/eventBus";
+import { emailQueue } from "@jobs/queue.config";
+import { generateAndStoreOtp, verifyOtpCode } from "@modules/otp/otp.service";
+import { OtpPurpose } from "@modules/otp/otp.types";
+import { UserStatus } from "@modules/user/user.types";
+import { CONSTANTS } from "@utils/constants";
+import { createUserTokens } from "@utils/userTokens";
 import bcrypt from "bcrypt";
 import httpStatus from "http-status-codes";
+import mongoose from "mongoose";
 import env from "../../config/env.config";
 import AppError from "../../errorHelpers/AppError";
-import { createUserTokens } from "../../utils/userTokens";
 import { Wallet } from "../wallet/wallet.model";
 import { User } from "./auth.model";
-import { IAuthProvider, ILogin, IRegister } from "./auth.types";
+import {
+  IAuthProvider,
+  LoginDTO,
+  LoginResponse,
+  RegisterDTO,
+} from "./auth.types";
 
-const register = async (payload: Partial<IRegister>) => {
-  const { email, password, phone, ...rest } = payload;
-  const isUserExist = await User.findOne({ email });
-  if (isUserExist) {
-    throw new AppError(httpStatus.BAD_REQUEST, "User Already Exist!");
+const register = async (payload: RegisterDTO) => {
+  const { fullName, email, phone, password } = payload;
+  const existingUser = await User.findOne({
+    $or: [{ email }, { phone }],
+  }).lean();
+  if (existingUser) {
+    if (existingUser.email === email) {
+      throw new AppError(
+        httpStatus.CONFLICT,
+        "An account with this email already exists.",
+      );
+    }
+    throw new AppError(
+      httpStatus.CONFLICT,
+      "An account with this phone number already exists.",
+    );
   }
+  // 2. Use a MongoDB session for atomic User + Wallet creation
+  //    If wallet creation fails, the user document is rolled back.
+  //    No orphaned user without a wallet.
+  const session = await mongoose.startSession();
+  try {
+    session.startTransaction();
+    const authProvider: IAuthProvider = {
+      provider: "credentials",
+      providerId: email as string,
+    };
+    // 3. Create user (password hashed by pre-save hook in user.model.ts)
+    const [user] = await User.create(
+      [{ fullName, email, phone, password, auths: [authProvider] }],
+      {
+        session,
+      },
+    );
+    // 4. Create wallet atomically with user creation
+    await Wallet.create(
+      [
+        {
+          userId: user._id,
+          currency: "BDT",
+          // New users get unverified limits until KYC
+          limits: {
+            dailyDebit: CONSTANTS.DEFAULT_DAILY_LIMIT,
+            weeklyDebit: CONSTANTS.DEFAULT_DAILY_LIMIT * 5,
+            monthlyDebit: CONSTANTS.DEFAULT_DAILY_LIMIT * 15,
+            singleTransactionMax: CONSTANTS.DEFAULT_DAILY_LIMIT,
+            singleTransactionMin: CONSTANTS.MIN_TRANSACTION,
+          },
+        },
+      ],
+      { session },
+    );
 
-  const hashed = await bcrypt.hash(
-    password as string,
-    Number(env.BCRYPT_SALT_ROUND),
-  );
+    await session.commitTransaction();
+    // 5. Generate and send OTP (OUTSIDE the session — email is not transactional)
+    const otpCode = await generateAndStoreOtp(
+      String(user._id),
+      user.email,
+      OtpPurpose.EMAIL_VERIFY,
+    );
+    // 6. Queue the verification email asynchronously
+    //    Do NOT await — let it run in the background
 
-  const authProvider: IAuthProvider = {
-    provider: "credentials",
-    providerId: email as string,
-  };
+    emailQueue.add(
+      "sendVerificationEmail",
+      {
+        to: user.email,
+        fullName: user.fullName,
+        otpCode,
+      },
+      {
+        attempts: env.EMAIL_JOB_ATTEMPTS,
+        backoff: { type: "exponential", delay: env.EMAIL_JOB_BACKOFF_DELAY },
+      },
+    );
 
-  const user = await User.create({
-    email,
-    password: hashed,
-    phone,
-    auths: [authProvider],
-    ...rest,
-  });
-  // create wallet automatically
-  await Wallet.create({
-    userId: user._id,
-  });
-  return user;
+    // 7. Emit event (other listeners may react — analytics, onboarding, etc.)
+    eventBus.emit("user_registered", {
+      userId: String(user._id),
+      email: user.email,
+      fullName: user.fullName,
+    });
+
+    logger.info(`New user registered: ${email}`);
+    return user;
+  } catch (error) {
+    await session.abortTransaction();
+    throw error;
+  } finally {
+    await session.endSession();
+  }
 };
 
-const login = async (payload: ILogin) => {
-  const { email, password } = payload;
+// ─── VERIFY EMAIL ─────────────────────────────────────────────────
 
-  const isUserExist = await User.findOne({ email });
+const verifyEmail = async (email: string, code: string) => {
+  // 1. Find user first — give generic error if not found
+  const user = await User.findOne({ email });
 
-  if (!isUserExist) {
-    throw new AppError(httpStatus.BAD_REQUEST, "User doesn't exist!");
+  if (!user) {
+    throw new AppError(httpStatus.BAD_REQUEST, "Invalid email or OTP.");
   }
-  if (!isUserExist.password)
+
+  if (user.isEmailVerified) {
     throw new AppError(
-      httpStatus.BAD_REQUEST,
-      "Password not set for this account",
+      httpStatus.CONFLICT,
+      "Email is already verified. Please log in.",
     );
-  const isPasswordMatched = await bcrypt.compare(
-    password as string,
-    isUserExist.password as string,
+  }
+
+  // 2. Verify the OTP
+  await verifyOtpCode(email, code, OtpPurpose.EMAIL_VERIFY);
+
+  // 3. Mark user as verified
+  user.isEmailVerified = true;
+  await user.save();
+
+  // 4. Send welcome email (async, non-blocking)
+  await emailQueue.add("sendWelcomeEmail", {
+    to: user.email,
+    fullName: user.fullName,
+  });
+
+  logger.info(`Email verified: ${email}`);
+
+  return { message: "Email verified successfully. You can now log in." };
+};
+
+// ─── LOGIN ────────────────────────────────────────────────────────
+
+const login = async (
+  dto: LoginDTO,
+  ipAddress: string,
+): Promise<LoginResponse> => {
+  const { email, password, deviceId, deviceName } = dto;
+
+  // 1. Check if account is temporarily locked (from failed attempts)
+  const failKey = `login:fail:${email}`;
+  const failCount = parseInt((await redis.get(failKey)) ?? "0");
+
+  if (failCount >= 5) {
+    const ttl = await redis.ttl(failKey);
+    throw new AppError(
+      httpStatus.CONFLICT,
+      `Account temporarily locked. Try again in ${Math.ceil(ttl / 60)} minute(s).`,
+    );
+  }
+
+  // 2. Fetch user WITH password (select: false normally excludes it)
+  const user = await User.findOne({ email, isDeleted: false }).select(
+    "+password",
   );
 
-  if (!isPasswordMatched) {
-    throw new AppError(httpStatus.BAD_REQUEST, "Incorrect Password!");
+  // 3. Verify credentials — SAME error for wrong email or wrong password
+  //    (prevents account enumeration)
+  const passwordValid = user ? await user.comparePassword(password) : false;
+
+  if (!user || !passwordValid) {
+    // Increment fail counter
+    const newCount = await redis.incr(failKey);
+    if (newCount === 1) await redis.expire(failKey, 15 * 60); // 15-min window
+
+    // Warn when getting close to lockout
+    const remaining = 5 - newCount;
+    if (remaining > 0 && remaining <= 2) {
+      throw new AppError(
+        httpStatus.UNAUTHORIZED,
+        `Invalid email or password. ${remaining} attempt${remaining === 1 ? "" : "s"} remaining before lockout.`,
+      );
+    }
+
+    throw unauthorized("Invalid email or password.");
   }
 
-  const userTokens = createUserTokens(isUserExist);
+  // 4. Check account status
+  if (!user.isEmailVerified) {
+    throw new AppError(
+      httpStatus.FORBIDDEN,
+      "Email not verified. Please verify your email first.",
+    );
+  }
 
-  const { password: pass, ...rest } = isUserExist.toObject();
+  if (user.status !== UserStatus.ACTIVE) {
+    throw new AppError(
+      httpStatus.FORBIDDEN,
+      `Your account is ${user.status}. Please contact support.`,
+    );
+  }
+
+  // 5. Clear failure counter on successful login
+  await redis.del(failKey);
+
+  // 6. Device management — detect new devices and alert user
+  const knownDevice = user.devices.find((d) => d.deviceId === deviceId);
+
+  if (!knownDevice) {
+    // New device — add to list and send security alert
+    user.devices.push({
+      deviceId,
+      deviceName,
+      ipAddress,
+      lastUsed: new Date(),
+      isTrusted: false,
+    });
+
+    // Cap device list at 10
+    if (user.devices.length > 10) {
+      user.devices.shift(); // Remove oldest
+    }
+
+    // Non-blocking security alert email
+    emailQueue.add("sendNewDeviceAlert", {
+      to: user.email,
+      fullName: user.fullName,
+      deviceName,
+      ipAddress,
+      timestamp: new Date().toISOString(),
+    });
+
+    eventBus.emit("login_newDevice", {
+      userId: String(user._id),
+      email: user.email,
+      deviceName,
+      ipAddress,
+    });
+  } else {
+    // Update last used timestamp
+    knownDevice.lastUsed = new Date();
+    knownDevice.ipAddress = ipAddress;
+  }
+
+  // 7. Update last login metadata
+  user.lastLoginAt = new Date();
+  user.lastLoginIp = ipAddress;
+  await user.save();
+
+  // 8. Generate token pair
+  const userObj = user.toObject();
+  const userTokens = await createUserTokens({
+    ...userObj,
+    _id: String(userObj._id),
+  });
+  const { password: pass, ...rest } = userObj;
+
+  logger.info(`User logged in: ${email} from ${ipAddress}`);
 
   return {
-    accessToken: userTokens.accessToken,
-    refreshToken: userTokens.refreshToken,
-    user: rest,
+    tokens: {
+      accessToken: userTokens.accessToken,
+      refreshToken: userTokens.refreshToken,
+    },
+    user: {
+      _id: String(user._id),
+      fullName: user.fullName,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      isEmailVerified: user.isEmailVerified,
+      kycStatus: user.kyc.status,
+    },
   };
 };
 
@@ -103,4 +316,7 @@ const setPassword = async (userId: string, plainPassword: string) => {
   await user.save();
 };
 
-export const AuthServices = { register, login, setPassword };
+export const AuthServices = { register, login, setPassword, verifyEmail };
+function unauthorized(arg0: string) {
+  throw new Error("Function not implemented.");
+}

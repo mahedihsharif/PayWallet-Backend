@@ -1,19 +1,22 @@
+import redis from "@config/redis.config";
+import crypto from "crypto";
 import httpStatus from "http-status-codes";
 import { JwtPayload } from "jsonwebtoken";
 import env from "../config/env.config";
 import AppError from "../errorHelpers/AppError";
 import { User } from "../modules/auth/auth.model";
-import { IRegister } from "../modules/auth/auth.types";
+import { AuthUser } from "../modules/auth/auth.types";
+import { CONSTANTS } from "./constants";
 import { generateToken, verifyToken } from "./jwt";
 
-export const createUserTokens = (user: Partial<IRegister>) => {
+export const createUserTokens = async (user: Partial<AuthUser>) => {
   const { _id, email, role } = user;
   const jwtPayload = {
     userId: _id,
     email: email,
     role: role,
   };
-
+  const jti = crypto.randomUUID();
   const accessToken = generateToken(
     jwtPayload,
     env.JWT_ACCESS_SECRET,
@@ -24,6 +27,13 @@ export const createUserTokens = (user: Partial<IRegister>) => {
     jwtPayload,
     env.JWT_REFRESH_SECRET,
     env.JWT_REFRESH_EXPIRES_IN,
+  );
+
+  // Store refresh token in Redis with TTL
+  await redis.setex(
+    CONSTANTS.REDIS_KEYS.REFRESH_TOKEN(_id as string, jti),
+    CONSTANTS.REFRESH_TOKEN_TTL,
+    JSON.stringify({ userId: _id, createdAt: Date.now() }),
   );
 
   return {

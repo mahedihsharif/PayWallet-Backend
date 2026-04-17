@@ -101,7 +101,10 @@ if (env.NODE_ENV === "DEVELOPMENT") {
   );
 }
 // ─── 8. Global rate limiter ───────────────────────────────────────
-app.use("/api/v1", globalLimiter);
+app.use((req, res, next) => {
+  if (req.path.startsWith("/api/v1/auth")) return next();
+  return globalLimiter(req, res, next);
+});
 app.use("/api/v1", router);
 app.use(notFound);
 app.use(globalErrorHandler);

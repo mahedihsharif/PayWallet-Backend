@@ -8,16 +8,31 @@ import sendResponse from "../../utils/sendResponse";
 import { setAuthCookie } from "../../utils/setCookie";
 import { createUserTokens } from "../../utils/userTokens";
 import { AuthServices } from "./auth.service";
-import { IRegister } from "./auth.types";
+import { LoginDTO, RegisterDTO } from "./auth.types";
 
 const register = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const result = await AuthServices.register(req.body);
+    const result = await AuthServices.register(req.body as RegisterDTO);
 
     sendResponse(res, {
       statusCode: httpStatus.CREATED,
       success: true,
-      message: "User Created Successfully!",
+      message:
+        "Registration successful. Please check your email for a verification code.",
+      data: result,
+    });
+  },
+);
+
+const verifyEmail = catchAsync(
+  async (req: Request, res: Response, next: NextFunction) => {
+    const { email, code } = req.body as { email: string; code: string };
+    const result = await AuthServices.verifyEmail(email, code);
+
+    sendResponse(res, {
+      statusCode: httpStatus.OK,
+      success: true,
+      message: "Email verified successfully!",
       data: result,
     });
   },
@@ -25,8 +40,10 @@ const register = catchAsync(
 
 const login = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const result = await AuthServices.login(req.body);
-
+    const dto = req.body as LoginDTO;
+    const ipAddress = req.ip ?? req.socket.remoteAddress ?? "unknown";
+    const result = await AuthServices.login(dto, ipAddress);
+    setAuthCookie(res, result.tokens);
     sendResponse(res, {
       statusCode: httpStatus.OK,
       success: true,
@@ -45,13 +62,13 @@ const googleCallBack = catchAsync(
       redirectTo = redirectTo.slice(1);
     }
 
-    const user = req.user as IRegister;
+    const user = req.user;
 
     if (!user) {
       throw new AppError(httpStatus.NOT_FOUND, "User Not Found!");
     }
 
-    const tokenInfo = createUserTokens(user);
+    const tokenInfo = await createUserTokens(user);
     setAuthCookie(res, tokenInfo);
     res.redirect(`${env.FRONTEND_URL}/${redirectTo}`);
   },
@@ -101,4 +118,5 @@ export const AuthControllers = {
   googleCallBack,
   logout,
   setPassword,
+  verifyEmail,
 };

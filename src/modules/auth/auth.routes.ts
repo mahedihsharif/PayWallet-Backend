@@ -4,11 +4,13 @@ import passport from "passport";
 import env from "../../config/env.config";
 import { isGoogleOAuthConfigured } from "../../config/passport.config";
 import AppError from "../../errorHelpers/AppError";
-import { checkAuth } from "../../middlewares/checkAuth";
 import validateRequest from "../../middlewares/validateRequest";
 import { AuthControllers } from "./auth.controller";
-import { Role } from "./auth.types";
-import { loginSchema, registerSchema } from "./auth.validation";
+import {
+  loginSchema,
+  registerSchema,
+  verifyEmailSchema,
+} from "./auth.validation";
 
 const router = Router();
 const ensureGoogleOAuthConfigured = (
@@ -32,12 +34,17 @@ router.post(
   validateRequest(registerSchema),
   AuthControllers.register,
 );
-router.post("/login", validateRequest(loginSchema), AuthControllers.login);
 router.post(
-  "/set-password",
-  checkAuth(...Object.values(Role)),
-  AuthControllers.setPassword,
+  "/verify-email",
+  validateRequest(verifyEmailSchema),
+  AuthControllers.verifyEmail,
 );
+router.post("/login", validateRequest(loginSchema), AuthControllers.login);
+// router.post(
+//   "/set-password",
+//   checkAuth(...Object.values(Role)),
+//   AuthControllers.setPassword,
+// );
 
 router.get(
   "/google",

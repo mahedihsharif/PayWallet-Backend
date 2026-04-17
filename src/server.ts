@@ -9,6 +9,7 @@ import env from "@config/env.config";
 import app from "./app";
 import "./events/listeners/transaction.listener";
 import "./events/listeners/user.listener";
+import "./jobs/email.job";
 
 let httpServer: http.Server;
 

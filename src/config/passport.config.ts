@@ -8,7 +8,8 @@ import {
 import mongoose from "mongoose";
 
 import { User } from "../modules/auth/auth.model";
-import { Role } from "../modules/auth/auth.types";
+
+import { Role, UserStatus } from "@modules/user/user.types";
 import { Wallet } from "../modules/wallet/wallet.model";
 import env from "./env.config";
 
@@ -46,7 +47,10 @@ if (isGoogleOAuthConfigured) {
           let isUserExist = await User.findOne({ email }).session(session);
 
           // blocked user
-          if (isUserExist && isUserExist.isBlocked) {
+          if (
+            (isUserExist && isUserExist.status === UserStatus.BANNED) ||
+            (isUserExist && isUserExist.status === UserStatus.SUSPENDED)
+          ) {
             await session.abortTransaction();
             return done(null, false, { message: "User is blocked" });
           }
@@ -57,8 +61,8 @@ if (isGoogleOAuthConfigured) {
               [
                 {
                   email,
-                  name: profile.displayName,
-                  // picture: profile.photos?.[0]?.value,
+                  fullName: profile.displayName,
+                  avatarUrl: profile.photos?.[0]?.value,
                   role: Role.USER,
                   auths: [
                     {
@@ -66,6 +70,7 @@ if (isGoogleOAuthConfigured) {
                       providerId: profile.id,
                     },
                   ],
+                  isEmailVerified: true,
                 },
               ],
               { session },
