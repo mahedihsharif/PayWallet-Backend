@@ -12,8 +12,9 @@ import { generateToken, verifyToken } from "./jwt";
 
 export const createUserTokens = async (user: Partial<AuthUser>) => {
   const { _id, email, role } = user;
+  const userId = _id != null ? String(_id) : undefined;
   const jwtPayload = {
-    userId: _id,
+    userId: userId,
     email: email,
     role: role,
   };
@@ -32,9 +33,9 @@ export const createUserTokens = async (user: Partial<AuthUser>) => {
 
   // Store refresh token in Redis with TTL
   await redis.setex(
-    CONSTANTS.REDIS_KEYS.REFRESH_TOKEN(_id as string, jti),
+    CONSTANTS.REDIS_KEYS.REFRESH_TOKEN(userId!, jti),
     CONSTANTS.REFRESH_TOKEN_TTL,
-    JSON.stringify({ userId: _id, createdAt: Date.now() }),
+    JSON.stringify({ userId, createdAt: Date.now() }),
   );
 
   return {

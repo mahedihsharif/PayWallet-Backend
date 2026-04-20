@@ -1,3 +1,5 @@
+import type { Types } from "mongoose";
+
 // ─── Request body types ───────────────────────────────────────────
 // These match the Joi validation schemas exactly
 export interface RegisterDTO {
@@ -53,7 +55,8 @@ export interface AuthTokens {
 }
 
 export interface AuthUser {
-  _id: string;
+  /** API responses use string; Passport / Mongoose documents may pass `ObjectId`. */
+  _id: string | Types.ObjectId;
   fullName: string;
   email: string;
   phone: string;

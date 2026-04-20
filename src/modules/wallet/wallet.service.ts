@@ -1,5 +1,5 @@
 import { Wallet } from "./wallet.model";
-import { Status } from "./wallet.types";
+import { WalletStatus } from "./wallet.types";
 
 const myWallet = async (userId: string) => {
   const wallet = await Wallet.findOne({ userId });
@@ -18,7 +18,7 @@ const myBalance = async (userId: string) => {
 const freezeWallet = async (userId: string) => {
   const wallet = await Wallet.findOneAndUpdate(
     { userId },
-    { status: Status.FROZEN },
+    { status: WalletStatus.FROZEN },
     { new: true },
   );
 
@@ -30,7 +30,7 @@ const freezeWallet = async (userId: string) => {
 const unfreezeWallet = async (userId: string) => {
   const wallet = await Wallet.findOneAndUpdate(
     { userId },
-    { status: Status.ACTIVE },
+    { status: WalletStatus.ACTIVE },
     { new: true },
   );
   return {

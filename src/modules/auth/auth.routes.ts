@@ -72,6 +72,20 @@ router.post(
   AuthControllers.resendOtp,
 );
 
+// ─── Protected routes (authentication required) ───────────────────
+
+router.post(
+  "/logout",
+  checkAuth(...Object.values(Role)),
+  AuthControllers.logout,
+);
+
+router.post(
+  "/logout-all",
+  checkAuth(...Object.values(Role)),
+  AuthControllers.logoutAll,
+);
+
 router.get(
   "/google",
   ensureGoogleOAuthConfigured,

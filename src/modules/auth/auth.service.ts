@@ -11,7 +11,9 @@ import {
   createUserTokens,
 } from "@utils/userTokens";
 import bcrypt from "bcrypt";
+import crypto from "crypto";
 import httpStatus from "http-status-codes";
+import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
 import env from "../../config/env.config";
 import AppError from "../../errorHelpers/AppError";
@@ -458,6 +460,87 @@ const resendOtp = async (
   return { message: "A new OTP has been sent to your email." };
 };
 
+const logout = async (
+  accessToken: string,
+  refreshToken: string | undefined,
+  userId: string,
+): Promise<void> => {
+  // 1. Blacklist the access token for its remaining TTL
+  //    Prevents using the access token after logout until it naturally expires
+  const tokenHash = crypto
+    .createHash("sha256")
+    .update(accessToken)
+    .digest("hex");
+
+  const decoded = jwt.decode(accessToken) as { exp: number } | null;
+  if (decoded?.exp) {
+    const remainingTTL = decoded.exp - Math.floor(Date.now() / 1000);
+    if (remainingTTL > 0) {
+      await redis.setex(
+        CONSTANTS.REDIS_KEYS.BLACKLIST(tokenHash),
+        remainingTTL,
+        "1",
+      );
+    }
+  }
+
+  // 2. Revoke the refresh token (if provided)
+  if (refreshToken) {
+    try {
+      const decodedRefresh = jwt.decode(refreshToken) as {
+        sub: string;
+        jti: string;
+      } | null;
+
+      if (decodedRefresh?.jti) {
+        await redis.del(
+          CONSTANTS.REDIS_KEYS.REFRESH_TOKEN(userId, decodedRefresh.jti),
+        );
+      }
+    } catch {
+      // If refresh token is malformed — still proceed with logout
+      logger.warn(
+        `Could not decode refresh token during logout for user ${userId}`,
+      );
+    }
+  }
+
+  logger.info(`User logged out: ${userId}`);
+};
+
+// ─── LOGOUT ALL DEVICES ───────────────────────────────────────────
+const logoutAllDevices = async (
+  accessToken: string,
+  userId: string,
+): Promise<void> => {
+  // Blacklist current access token
+  const tokenHash = crypto
+    .createHash("sha256")
+    .update(accessToken)
+    .digest("hex");
+  const decoded = jwt.decode(accessToken) as { exp: number } | null;
+
+  if (decoded?.exp) {
+    const remainingTTL = decoded.exp - Math.floor(Date.now() / 1000);
+    if (remainingTTL > 0) {
+      await redis.setex(
+        CONSTANTS.REDIS_KEYS.BLACKLIST(tokenHash),
+        remainingTTL,
+        "1",
+      );
+    }
+  }
+
+  // Delete ALL refresh tokens for this user
+  const pattern = `rt:${userId}:*`;
+  const allKeys = await redis.keys(pattern);
+  if (allKeys.length > 0) {
+    await redis.del(...allKeys);
+  }
+
+  logger.info(`All sessions revoked for user: ${userId}`);
+};
+
 export const AuthServices = {
   register,
   login,
@@ -467,4 +550,6 @@ export const AuthServices = {
   refreshToken,
   setPassword,
   verifyEmail,
+  logout,
+  logoutAllDevices,
 };

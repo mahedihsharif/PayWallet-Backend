@@ -102,29 +102,6 @@ const googleCallBack = catchAsync(
   },
 );
 
-const logout = catchAsync(
-  async (_req: Request, res: Response, _next: NextFunction) => {
-    res.clearCookie("accessToken", {
-      httpOnly: true,
-      secure: false,
-      sameSite: "lax",
-    });
-
-    res.clearCookie("refreshToken", {
-      httpOnly: true,
-      secure: false,
-      sameSite: "lax",
-    });
-
-    sendResponse(res, {
-      statusCode: httpStatus.OK,
-      success: true,
-      message: "User Logout Successfully!",
-      data: null,
-    });
-  },
-);
-
 const setPassword = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const decodedToken = req.user as JwtPayload;
@@ -185,6 +162,73 @@ const resendOtp = catchAsync(
   },
 );
 
+const logout = catchAsync(
+  async (req: Request, res: Response, _next: NextFunction) => {
+    const accessToken =
+      req.cookies?.accessToken ?? req.headers.authorization?.split(" ")[1];
+    const refreshToken = req.cookies?.refreshToken;
+    if (accessToken) {
+      await AuthServices.logout(
+        accessToken,
+        refreshToken,
+        String(req.user!._id),
+      );
+    }
+    res.clearCookie("accessToken", {
+      httpOnly: true,
+      secure: false,
+      sameSite: "lax",
+      path: "/",
+    });
+
+    res.clearCookie("refreshToken", {
+      httpOnly: true,
+      secure: false,
+      sameSite: "lax",
+      path: "/api/v1/auth/refresh",
+    });
+
+    sendResponse(res, {
+      statusCode: httpStatus.OK,
+      success: true,
+      message: "User Logout Successfully!",
+      data: null,
+    });
+  },
+);
+
+// ─── POST /api/v1/auth/logout-all ────────────────────────────────
+
+const logoutAll = catchAsync(async (req: Request, res: Response) => {
+  const accessToken =
+    req.cookies?.accessToken ?? req.headers.authorization?.split(" ")[1];
+
+  if (accessToken) {
+    await AuthServices.logoutAllDevices(accessToken, String(req.user!._id));
+  }
+
+  res.clearCookie("accessToken", {
+    httpOnly: true,
+    secure: false,
+    sameSite: "lax",
+    path: "/",
+  });
+
+  res.clearCookie("refreshToken", {
+    httpOnly: true,
+    secure: false,
+    sameSite: "lax",
+    path: "/api/v1/auth/refresh",
+  });
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Logged out of all devices successfully.",
+    data: null,
+  });
+});
+
 export const AuthControllers = {
   register,
   login,
@@ -194,6 +238,7 @@ export const AuthControllers = {
   refreshToken,
   googleCallBack,
   logout,
+  logoutAll,
   setPassword,
   verifyEmail,
 };

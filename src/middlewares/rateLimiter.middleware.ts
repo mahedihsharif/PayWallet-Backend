@@ -19,7 +19,7 @@ const createRateLimiter = (max: number, windowMs: number, message: string) =>
     // ✅ Use ipKeyGenerator helper for IPv6 safety
     keyGenerator: (req) => {
       if (req.user) {
-        return `user:${String((req.user as { _id: string })._id)}`;
+        return `user:${String(req.user._id)}`;
       }
       // ipKeyGenerator handles IPv4, IPv6, and mapped addresses correctly
       return ipKeyGenerator(req.ip || req.socket.remoteAddress || "unknown");
