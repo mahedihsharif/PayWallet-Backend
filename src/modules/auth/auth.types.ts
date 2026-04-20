@@ -47,10 +47,9 @@ export interface ChangePasswordDTO {
 }
 
 // ─── Response types ───────────────────────────────────────────────
-
 export interface AuthTokens {
   accessToken: string;
-  refreshToken: string;
+  refreshToken?: string;
 }
 
 export interface AuthUser {

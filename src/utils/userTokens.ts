@@ -1,4 +1,5 @@
 import redis from "@config/redis.config";
+import { UserStatus } from "@modules/user/user.types";
 import crypto from "crypto";
 import httpStatus from "http-status-codes";
 import { JwtPayload } from "jsonwebtoken";
@@ -47,7 +48,7 @@ export const createNewAccessTokenWithRefreshToken = async (
 ) => {
   const verifiedRefreshToken = verifyToken(
     refreshToken,
-    env.JWT_REFRESH_SECRET!,
+    env.JWT_REFRESH_SECRET,
   ) as JwtPayload;
 
   const isUserExist = await User.findOne({ email: verifiedRefreshToken.email });
@@ -55,19 +56,19 @@ export const createNewAccessTokenWithRefreshToken = async (
     throw new AppError(httpStatus.BAD_REQUEST, "User doesn't exist!");
   }
 
-  //   if (isUserExist) {
-  //     if (
-  //       isUserExist.isActive === IsActive.BLOCKED ||
-  //       isUserExist.isActive === IsActive.INACTIVE
-  //     )
-  //       throw new AppError(
-  //         httpStatus.BAD_REQUEST,
-  //         `User is ${isUserExist.isActive}`,
-  //       );
-  //     if (isUserExist.isDeleted) {
-  //       throw new AppError(httpStatus.BAD_REQUEST, "User is Deleted!");
-  //     }
-  //   }
+  if (isUserExist) {
+    if (
+      isUserExist.status === UserStatus.BANNED ||
+      isUserExist.status === UserStatus.SUSPENDED
+    )
+      throw new AppError(
+        httpStatus.BAD_REQUEST,
+        `User is ${isUserExist.status}`,
+      );
+    if (isUserExist.isDeleted) {
+      throw new AppError(httpStatus.BAD_REQUEST, "User is Deleted!");
+    }
+  }
 
   const jwtPayload = {
     userId: isUserExist._id,

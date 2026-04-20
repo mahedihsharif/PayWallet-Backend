@@ -6,7 +6,10 @@ import { generateAndStoreOtp, verifyOtpCode } from "@modules/otp/otp.service";
 import { OtpPurpose } from "@modules/otp/otp.types";
 import { UserStatus } from "@modules/user/user.types";
 import { CONSTANTS } from "@utils/constants";
-import { createUserTokens } from "@utils/userTokens";
+import {
+  createNewAccessTokenWithRefreshToken,
+  createUserTokens,
+} from "@utils/userTokens";
 import bcrypt from "bcrypt";
 import httpStatus from "http-status-codes";
 import mongoose from "mongoose";
@@ -184,15 +187,15 @@ const login = async (
     if (newCount === 1) await redis.expire(failKey, 15 * 60); // 15-min window
 
     // Warn when getting close to lockout
-    const remaining = 5 - newCount;
+    const remaining = 15 - newCount;
     if (remaining > 0 && remaining <= 2) {
       throw new AppError(
         httpStatus.UNAUTHORIZED,
         `Invalid email or password. ${remaining} attempt${remaining === 1 ? "" : "s"} remaining before lockout.`,
       );
     }
-
-    throw unauthorized("Invalid email or password.");
+    // MUST THROW (important)
+    throw new AppError(httpStatus.UNAUTHORIZED, "Invalid email or password");
   }
 
   // 4. Check account status
@@ -214,10 +217,13 @@ const login = async (
   await redis.del(failKey);
 
   // 6. Device management — detect new devices and alert user
-  const knownDevice = user.devices.find((d) => d.deviceId === deviceId);
+  const knownDevice = user
+    ? user.devices.find((d) => d.deviceId === deviceId)
+    : undefined;
 
   if (!knownDevice) {
     // New device — add to list and send security alert
+
     user.devices.push({
       deviceId,
       deviceName,
@@ -284,6 +290,15 @@ const login = async (
   };
 };
 
+const refreshToken = async (refreshToken: string) => {
+  const newAccessToken =
+    await createNewAccessTokenWithRefreshToken(refreshToken);
+
+  return {
+    accessToken: newAccessToken,
+  };
+};
+
 const setPassword = async (userId: string, plainPassword: string) => {
   const user = await User.findById(userId);
 
@@ -301,22 +316,155 @@ const setPassword = async (userId: string, plainPassword: string) => {
     );
   }
 
-  const hashedPassword = await bcrypt.hash(
-    plainPassword,
-    Number(env.BCRYPT_SALT_ROUND),
-  );
-
   const credentialProvider: IAuthProvider = {
     provider: "credentials",
     providerId: user.email,
   };
 
-  user.password = hashedPassword;
-  user.auths = [...user.auths, credentialProvider] as any;
+  // Password hashing is handled by the User model pre-save hook.
+  user.password = plainPassword;
+
+  const hasCredentialAuth = user.auths.some(
+    (providerObject) => providerObject.provider === "credentials",
+  );
+
+  if (!hasCredentialAuth) {
+    user.auths = [...user.auths, credentialProvider] as any;
+  }
+
   await user.save();
 };
 
-export const AuthServices = { register, login, setPassword, verifyEmail };
-function unauthorized(arg0: string) {
-  throw new Error("Function not implemented.");
-}
+// ─── FORGOT PASSWORD ──────────────────────────────────────────────
+
+const forgotPassword = async (email: string): Promise<{ message: string }> => {
+  const user = await User.findOne({ email, isDeleted: false });
+
+  // ALWAYS return the same message — prevents email enumeration
+  // (attacker cannot determine whether an email is registered)
+  const genericMessage =
+    "If an account with that email exists, a password reset code has been sent.";
+
+  if (!user) {
+    // Simulate processing delay to prevent timing attacks
+    await new Promise((r) => setTimeout(r, 500));
+    return { message: genericMessage };
+  }
+
+  // Generate OTP and queue email
+  const otpCode = await generateAndStoreOtp(
+    String(user._id),
+    user.email,
+    OtpPurpose.PASSWORD_RESET,
+  );
+
+  await emailQueue.add(
+    "sendPasswordResetEmail",
+    {
+      to: user.email,
+      fullName: user.fullName,
+      otpCode,
+    },
+    { attempts: 3, backoff: { type: "exponential", delay: 2_000 } },
+  );
+
+  logger.info(`Password reset OTP sent to: ${email}`);
+  return { message: genericMessage };
+};
+
+// ─── RESET PASSWORD ───────────────────────────────────────────────
+export const resetPassword = async (
+  email: string,
+  code: string,
+  newPassword: string,
+): Promise<{ message: string }> => {
+  // 1. Find user
+  const user = await User.findOne({ email, isDeleted: false }).select(
+    "+password",
+  );
+  if (!user) {
+    throw new AppError(httpStatus.BAD_REQUEST, "Invalid email or OTP.");
+  }
+
+  // 2. Verify OTP
+  await verifyOtpCode(email, code, OtpPurpose.PASSWORD_RESET);
+
+  // 3. Prevent reuse of the same password
+  const isSamePassword = await bcrypt.compare(newPassword, user.password);
+  if (isSamePassword) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "New password must be different from your current password.",
+    );
+  }
+
+  // 4. Update password (pre-save hook in user.model.ts will hash it)
+  user.password = newPassword;
+  await user.save();
+
+  // 5. Revoke ALL active sessions — force re-login with new password
+  const pattern = `rt:${String(user._id)}:*`;
+  const allKeys = await redis.keys(pattern);
+  if (allKeys.length > 0) await redis.del(...allKeys);
+
+  // 6. Notify user of the password change
+  await emailQueue.add("sendPasswordChangedEmail", {
+    to: user.email,
+    fullName: user.fullName,
+  });
+
+  logger.info(`Password reset completed for: ${email}`);
+  return {
+    message:
+      "Password reset successfully. Please log in with your new password.",
+  };
+};
+
+// ─── RESEND OTP ───────────────────────────────────────────────────
+const resendOtp = async (
+  email: string,
+  purpose: OtpPurpose.EMAIL_VERIFY | OtpPurpose.PASSWORD_RESET,
+): Promise<{ message: string }> => {
+  const user = await User.findOne({ email, isDeleted: false });
+
+  if (!user) {
+    // Generic message — no enumeration
+    return {
+      message: "If that email is registered, a new OTP has been sent.",
+    };
+  }
+
+  if (purpose === OtpPurpose.EMAIL_VERIFY && user.isEmailVerified) {
+    return { message: "Email is already verified." };
+  }
+
+  const otpCode = await generateAndStoreOtp(
+    String(user._id),
+    user.email,
+    purpose,
+  );
+
+  const jobName =
+    purpose === OtpPurpose.EMAIL_VERIFY
+      ? "sendVerificationEmail"
+      : "sendPasswordResetEmail";
+
+  await emailQueue.add(
+    jobName,
+    { to: user.email, fullName: user.fullName, otpCode },
+    { attempts: 3 },
+  );
+
+  return { message: "A new OTP has been sent to your email." };
+};
+
+export const AuthServices = {
+  register,
+  login,
+  forgotPassword,
+  resetPassword,
+  resendOtp,
+  refreshToken,
+  setPassword,
+  verifyEmail,
+};

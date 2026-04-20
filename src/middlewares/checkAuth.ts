@@ -1,4 +1,5 @@
 import redis from "@config/redis.config";
+import { UserStatus } from "@modules/user/user.types";
 import { CONSTANTS } from "@utils/constants";
 import crypto from "crypto";
 import { NextFunction, Request, Response } from "express";
@@ -56,14 +57,14 @@ export const checkAuth =
       if (!isUserExist) {
         throw new AppError(httpStatus.BAD_REQUEST, "User doesn't exist!");
       }
-      // if (isUserExist.status !== "active") {
-      //   throw new AppError(
-      //     httpStatus.BAD_REQUEST,
-      //     `Account is ${isUserExist.status}. Contact support.`,
-      //   );
-      // }
-      if (isUserExist.isBlocked) {
-        throw new AppError(httpStatus.BAD_REQUEST, "User is Blocked!");
+      if (
+        (isUserExist && isUserExist.status === UserStatus.BANNED) ||
+        (isUserExist && isUserExist.status === UserStatus.SUSPENDED)
+      ) {
+        throw new AppError(
+          httpStatus.BAD_REQUEST,
+          `Account is ${isUserExist.status}. Contact support.`,
+        );
       }
 
       // role normalize (ADMIN vs admin bug fix)

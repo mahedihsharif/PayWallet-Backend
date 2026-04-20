@@ -1,3 +1,4 @@
+import { OtpPurpose } from "@modules/otp/otp.types";
 import { NextFunction, Request, Response } from "express";
 import httpStatus from "http-status-codes";
 import { JwtPayload } from "jsonwebtoken";
@@ -8,7 +9,13 @@ import sendResponse from "../../utils/sendResponse";
 import { setAuthCookie } from "../../utils/setCookie";
 import { createUserTokens } from "../../utils/userTokens";
 import { AuthServices } from "./auth.service";
-import { LoginDTO, RegisterDTO } from "./auth.types";
+import {
+  AuthTokens,
+  ForgotPasswordDTO,
+  LoginDTO,
+  RegisterDTO,
+  ResetPasswordDTO,
+} from "./auth.types";
 
 const register = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
@@ -49,6 +56,27 @@ const login = catchAsync(
       success: true,
       message: "User Login Successfully!",
       data: result,
+    });
+  },
+);
+
+const refreshToken = catchAsync(
+  async (req: Request, res: Response, next: NextFunction) => {
+    const refreshToken = req.cookies?.refreshToken;
+
+    if (!refreshToken) {
+      throw new AppError(httpStatus.BAD_REQUEST, "No refresh token received!");
+    }
+
+    const tokenInfo: AuthTokens = await AuthServices.refreshToken(
+      refreshToken as string,
+    );
+    setAuthCookie(res, tokenInfo);
+    sendResponse(res, {
+      statusCode: httpStatus.OK,
+      success: true,
+      message: "New Access Token Retrieved Successfully!",
+      data: tokenInfo,
     });
   },
 );
@@ -101,7 +129,7 @@ const setPassword = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const decodedToken = req.user as JwtPayload;
     const { password } = req.body;
-    await AuthServices.setPassword(decodedToken.userId, password);
+    await AuthServices.setPassword(decodedToken._id, password);
 
     sendResponse(res, {
       statusCode: httpStatus.OK,
@@ -112,9 +140,58 @@ const setPassword = catchAsync(
   },
 );
 
+const forgotPassword = catchAsync(
+  async (req: Request, res: Response, next: NextFunction) => {
+    const { email } = req.body as ForgotPasswordDTO;
+    const result = await AuthServices.forgotPassword(email);
+
+    sendResponse(res, {
+      statusCode: httpStatus.OK,
+      success: true,
+      message: result.message,
+      data: null,
+    });
+  },
+);
+
+const resetPassword = catchAsync(
+  async (req: Request, res: Response, next: NextFunction) => {
+    const { email, code, newPassword } = req.body as ResetPasswordDTO;
+    const result = await AuthServices.resetPassword(email, code, newPassword);
+
+    sendResponse(res, {
+      statusCode: httpStatus.OK,
+      success: true,
+      message: result.message,
+      data: null,
+    });
+  },
+);
+
+const resendOtp = catchAsync(
+  async (req: Request, res: Response, next: NextFunction) => {
+    const { email, purpose } = req.body as {
+      email: string;
+      purpose: OtpPurpose.EMAIL_VERIFY | OtpPurpose.PASSWORD_RESET;
+    };
+    const result = await AuthServices.resendOtp(email, purpose);
+
+    sendResponse(res, {
+      statusCode: httpStatus.OK,
+      success: true,
+      message: result.message,
+      data: null,
+    });
+  },
+);
+
 export const AuthControllers = {
   register,
   login,
+  forgotPassword,
+  resetPassword,
+  resendOtp,
+  refreshToken,
   googleCallBack,
   logout,
   setPassword,

@@ -1,3 +1,5 @@
+import { checkAuth } from "@middlewares/checkAuth";
+import { Role } from "@modules/user/user.types";
 import { NextFunction, Request, Response, Router } from "express";
 import httpStatus from "http-status-codes";
 import passport from "passport";
@@ -7,8 +9,11 @@ import AppError from "../../errorHelpers/AppError";
 import validateRequest from "../../middlewares/validateRequest";
 import { AuthControllers } from "./auth.controller";
 import {
+  forgotPasswordSchema,
   loginSchema,
   registerSchema,
+  resendOtpSchema,
+  resetPasswordSchema,
   verifyEmailSchema,
 } from "./auth.validation";
 
@@ -40,11 +45,32 @@ router.post(
   AuthControllers.verifyEmail,
 );
 router.post("/login", validateRequest(loginSchema), AuthControllers.login);
-// router.post(
-//   "/set-password",
-//   checkAuth(...Object.values(Role)),
-//   AuthControllers.setPassword,
-// );
+
+router.post("/refresh", AuthControllers.refreshToken);
+
+router.post(
+  "/set-password",
+  checkAuth(...Object.values(Role)),
+  AuthControllers.setPassword,
+);
+
+router.post(
+  "/forgot-password",
+  validateRequest(forgotPasswordSchema),
+  AuthControllers.forgotPassword,
+);
+
+router.post(
+  "/reset-password",
+  validateRequest(resetPasswordSchema),
+  AuthControllers.resetPassword,
+);
+
+router.post(
+  "/resend-otp",
+  validateRequest(resendOtpSchema),
+  AuthControllers.resendOtp,
+);
 
 router.get(
   "/google",

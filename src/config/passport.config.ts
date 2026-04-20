@@ -52,7 +52,9 @@ if (isGoogleOAuthConfigured) {
             (isUserExist && isUserExist.status === UserStatus.SUSPENDED)
           ) {
             await session.abortTransaction();
-            return done(null, false, { message: "User is blocked" });
+            return done(null, false, {
+              message: "User is Banned or Suspended",
+            });
           }
 
           // user not exist → create
