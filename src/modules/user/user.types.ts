@@ -58,7 +58,92 @@ export interface IUser extends Document {
   lastLoginIp?: string;
   isDeleted: boolean;
   deletedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
   // Methods
   comparePassword(candidate: string): Promise<boolean>;
   comparePin(candidate: string): Promise<boolean>;
+}
+
+// ─── Request DTOs ─────────────────────────────────────────────────
+
+export interface UpdateProfileDTO {
+  fullName?: string;
+  phone?: string;
+}
+
+export interface SetPinDTO {
+  pin: string;
+  confirmPin: string;
+  password: string; // Require password confirmation to set/change PIN
+}
+
+export interface ChangePinDTO {
+  currentPin: string;
+  newPin: string;
+  confirmPin: string;
+}
+
+export interface SubmitKycDTO {
+  documentType: "NID" | "PASSPORT" | "DRIVING_LICENSE";
+  documentUrl: string; // Cloudinary URL — uploaded by frontend first
+  selfieUrl: string; // Cloudinary URL
+}
+
+export interface Enable2FADTO {
+  token: string; // 6-digit TOTP token from authenticator app
+}
+
+export interface Verify2FADTO {
+  token: string;
+}
+
+export interface UpdatePreferencesDTO {
+  emailNotifications?: boolean;
+  smsNotifications?: boolean;
+  transactionAlerts?: boolean;
+  loginAlerts?: boolean;
+  marketingCommunications?: boolean;
+}
+
+// ─── Response shapes ──────────────────────────────────────────────
+
+export interface UserProfileResponse {
+  _id: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  role: string;
+  status: string;
+  avatarUrl: string | null;
+  isEmailVerified: boolean;
+  isTwoFactorEnabled: boolean;
+  kyc: {
+    status: string;
+    documentType?: string;
+    submittedAt?: Date;
+    reviewedAt?: Date;
+    rejectionReason?: string;
+  };
+  limits: {
+    dailyLimit: number;
+    monthlyLimit: number;
+  };
+  lastLoginAt?: Date;
+  lastLoginIp?: string;
+  createdAt: Date;
+}
+
+export interface DeviceResponse {
+  deviceId: string;
+  deviceName: string;
+  ipAddress: string;
+  lastUsed: Date;
+  isTrusted: boolean;
+}
+
+export interface Setup2FAResponse {
+  secret: string;
+  qrCodeUrl: string;
+  backupCodes: string[];
 }

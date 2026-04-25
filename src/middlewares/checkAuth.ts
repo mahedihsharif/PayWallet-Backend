@@ -71,7 +71,7 @@ export const checkAuth =
       const userRole = (verifiedToken.role || "").toUpperCase();
       const allowedRoles = authRoles.map((r) => r.toUpperCase());
 
-      if (!allowedRoles.includes(userRole)) {
+      if (authRoles.length && !allowedRoles.includes(userRole)) {
         throw new AppError(
           httpStatus.FORBIDDEN,
           `Role '${userRole}' is not authorized for this action.`,

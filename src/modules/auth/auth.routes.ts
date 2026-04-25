@@ -1,5 +1,4 @@
 import { checkAuth } from "@middlewares/checkAuth";
-import { Role } from "@modules/user/user.types";
 import { NextFunction, Request, Response, Router } from "express";
 import httpStatus from "http-status-codes";
 import passport from "passport";
@@ -17,6 +16,7 @@ import {
   verifyEmailSchema,
 } from "./auth.validation";
 
+const auth = checkAuth();
 const router = Router();
 const ensureGoogleOAuthConfigured = (
   _req: Request,
@@ -45,27 +45,17 @@ router.post(
   AuthControllers.verifyEmail,
 );
 router.post("/login", validateRequest(loginSchema), AuthControllers.login);
-
 router.post("/refresh", AuthControllers.refreshToken);
-
-router.post(
-  "/set-password",
-  checkAuth(...Object.values(Role)),
-  AuthControllers.setPassword,
-);
-
 router.post(
   "/forgot-password",
   validateRequest(forgotPasswordSchema),
   AuthControllers.forgotPassword,
 );
-
 router.post(
   "/reset-password",
   validateRequest(resetPasswordSchema),
   AuthControllers.resetPassword,
 );
-
 router.post(
   "/resend-otp",
   validateRequest(resendOtpSchema),
@@ -73,19 +63,11 @@ router.post(
 );
 
 // ─── Protected routes (authentication required) ───────────────────
+router.post("/set-password", auth, AuthControllers.setPassword);
+router.post("/logout", auth, AuthControllers.logout);
+router.post("/logout-all", auth, AuthControllers.logoutAll);
 
-router.post(
-  "/logout",
-  checkAuth(...Object.values(Role)),
-  AuthControllers.logout,
-);
-
-router.post(
-  "/logout-all",
-  checkAuth(...Object.values(Role)),
-  AuthControllers.logoutAll,
-);
-
+//-- Google OAuth routes-----
 router.get(
   "/google",
   ensureGoogleOAuthConfigured,
