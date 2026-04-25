@@ -24,6 +24,6 @@ router.post(
   multerUpload.single("file"),
   UserControllers.uploadAvatar,
 );
-// router.delete("/me", auth, UserControllers.requestAccountDeletion);
+router.delete("/me", auth, UserControllers.requestAccountDeletion);
 
 export const UserRoutes = router;

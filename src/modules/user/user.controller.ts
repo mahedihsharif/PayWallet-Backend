@@ -21,39 +21,64 @@ const getProfile = catchAsync(
 );
 
 // ─── PATCH /api/v1/users/me ───────────────────────────────────────
-export const updateProfile = catchAsync(async (req: Request, res: Response) => {
-  const profile = await UserServices.updateProfile(
-    String(req.user!._id),
-    req.body,
-  );
-  sendResponse(res, {
-    statusCode: httpStatus.OK,
-    success: true,
-    message: "Profile updated successfully.",
-    data: profile,
-  });
-});
+export const updateProfile = catchAsync(
+  async (req: Request, res: Response, next: NextFunction) => {
+    const profile = await UserServices.updateProfile(
+      String(req.user!._id),
+      req.body,
+    );
+    sendResponse(res, {
+      statusCode: httpStatus.OK,
+      success: true,
+      message: "Profile updated successfully.",
+      data: profile,
+    });
+  },
+);
 
 // ─── POST /api/v1/users/me/avatar ────────────────────────────────
-const uploadAvatar = catchAsync(async (req: Request, res: Response) => {
-  if (!req.file)
-    throw new AppError(httpStatus.BAD_REQUEST, "Please upload an image file.");
+const uploadAvatar = catchAsync(
+  async (req: Request, res: Response, next: NextFunction) => {
+    if (!req.file)
+      throw new AppError(
+        httpStatus.BAD_REQUEST,
+        "Please upload an image file.",
+      );
 
-  const result = await UserServices.uploadAvatar(
-    String(req.user!._id),
-    req.file,
-  );
+    const result = await UserServices.uploadAvatar(
+      String(req.user!._id),
+      req.file,
+    );
 
-  sendResponse(res, {
-    statusCode: httpStatus.OK,
-    success: true,
-    message: "Avatar updated successfully.",
-    data: result,
-  });
-});
+    sendResponse(res, {
+      statusCode: httpStatus.OK,
+      success: true,
+      message: "Avatar updated successfully.",
+      data: result,
+    });
+  },
+);
+
+// ─── DELETE /api/v1/users/me ──────────────────────────────────────
+const requestAccountDeletion = catchAsync(
+  async (req: Request, res: Response, next: NextFunction) => {
+    const { password } = req.body as { password: string };
+    const result = await UserServices.requestAccountDeletion(
+      String(req.user!._id),
+      password,
+    );
+    sendResponse(res, {
+      statusCode: httpStatus.OK,
+      success: true,
+      message: result.message,
+      data: "",
+    });
+  },
+);
 
 export const UserControllers = {
   getProfile,
   updateProfile,
   uploadAvatar,
+  requestAccountDeletion,
 };

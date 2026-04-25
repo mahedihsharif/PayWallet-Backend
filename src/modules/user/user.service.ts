@@ -1,10 +1,16 @@
 import { deleteImageFromCLoudinary } from "@config/cloudinary.config";
 import logger from "@config/logger.config";
+import { Wallet } from "@modules/wallet/wallet.model";
 import httpStatus from "http-status-codes";
 import { HydratedDocument } from "mongoose";
 import AppError from "src/errorHelpers/AppError";
 import { User } from "../auth/auth.model";
-import { IUser, UpdateProfileDTO, UserProfileResponse } from "./user.types";
+import {
+  IUser,
+  UpdateProfileDTO,
+  UserProfileResponse,
+  UserStatus,
+} from "./user.types";
 
 // ─── Helper: format user for API response ─────────────────────────
 const formatUser = (user: HydratedDocument<IUser>): UserProfileResponse => {
@@ -97,11 +103,57 @@ const uploadAvatar = async (
 
   // Upload new avatar
   const avatarUrl = file.path;
-
   await User.findByIdAndUpdate(userId, { avatarUrl });
   logger.info(`Avatar updated for user ${userId}`);
 
   return { avatarUrl };
 };
 
-export const UserServices = { getProfile, updateProfile, uploadAvatar };
+// ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ───
+// ACCOUNT MANAGEMENT
+// ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ───
+const requestAccountDeletion = async (
+  userId: string,
+  password: string,
+): Promise<{ message: string }> => {
+  const user = await User.findById(userId).select("+password");
+  if (!user) throw new AppError(httpStatus.NOT_FOUND, "User not found.");
+
+  const passwordValid = await user.comparePassword(password);
+  if (!passwordValid) {
+    throw new AppError(httpStatus.UNAUTHORIZED, "Incorrect password.");
+  }
+
+  // Check for non-zero wallet balance
+  const wallet = await Wallet.findOne({ userId });
+  if (wallet && wallet.balance > 0) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      `Please withdraw your remaining balance of ৳${(wallet.balance / 100).toFixed(2)} before deleting your account.`,
+    );
+  }
+
+  // Soft delete — data retained for regulatory compliance (2 years)
+  user.isDeleted = true;
+  user.deletedAt = new Date();
+  user.status = UserStatus.SUSPENDED;
+  await user.save();
+
+  if (wallet) {
+    wallet.isDeleted = true;
+    await wallet.save();
+  }
+
+  logger.info(`Account deletion requested and processed for user ${userId}`);
+  return {
+    message:
+      "Your account has been scheduled for deletion. Data will be retained for 2 years per regulatory requirements.",
+  };
+};
+
+export const UserServices = {
+  getProfile,
+  updateProfile,
+  uploadAvatar,
+  requestAccountDeletion,
+};
