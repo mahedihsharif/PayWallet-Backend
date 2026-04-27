@@ -1,12 +1,15 @@
 import { deleteImageFromCLoudinary } from "@config/cloudinary.config";
 import logger from "@config/logger.config";
+import { emailQueue } from "@jobs/queue.config";
 import { Wallet } from "@modules/wallet/wallet.model";
 import httpStatus from "http-status-codes";
 import { HydratedDocument } from "mongoose";
 import AppError from "src/errorHelpers/AppError";
 import { User } from "../auth/auth.model";
 import {
+  ChangePinDTO,
   IUser,
+  SetPinDTO,
   UpdateProfileDTO,
   UserProfileResponse,
   UserStatus,
@@ -151,9 +154,117 @@ const requestAccountDeletion = async (
   };
 };
 
+// ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ───
+// PIN MANAGEMENT
+// ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ───
+const setPin = async (
+  userId: string,
+  dto: SetPinDTO,
+): Promise<{ message: string }> => {
+  const { pin, password } = dto;
+
+  // Require password confirmation — proves the real owner is setting the PIN
+  const user = await User.findById(userId).select("+password +pin");
+  if (!user) throw new AppError(httpStatus.NOT_FOUND, "User not found.");
+
+  const passwordValid = await user.comparePassword(password);
+  if (!passwordValid) {
+    throw new AppError(httpStatus.UNAUTHORIZED, "Incorrect account password.");
+  }
+
+  if (user.pin) {
+    // PIN already set — use changePin endpoint instead
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "A PIN is already set. Use the change PIN endpoint to update it.",
+    );
+  }
+
+  // Prevent obvious PINs
+  const obviousPins = [
+    "123456",
+    "654321",
+    "111111",
+    "000000",
+    "999999",
+    "123123",
+  ];
+  if (obviousPins.includes(pin)) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "This PIN is too common. Please choose a more secure PIN.",
+    );
+  }
+
+  // The pre-save hook in user.model.ts hashes the PIN via bcrypt
+  user.pin = pin;
+  await user.save();
+
+  logger.info(`Transaction PIN set for user ${userId}`);
+  return { message: "Transaction PIN set successfully." };
+};
+
+const changePin = async (
+  userId: string,
+  dto: ChangePinDTO,
+): Promise<{ message: string }> => {
+  const { currentPin, newPin } = dto;
+
+  const user = await User.findById(userId).select("+pin");
+  if (!user) throw new AppError(httpStatus.NOT_FOUND, "User not found.");
+
+  if (!user.pin) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "No PIN is set. Use the set PIN endpoint first.",
+    );
+  }
+
+  const currentPinValid = await user.comparePin(currentPin);
+  if (!currentPinValid) {
+    throw new AppError(httpStatus.UNAUTHORIZED, "Current PIN is incorrect.");
+  }
+
+  if (currentPin === newPin) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "New PIN must be different from your current PIN.",
+    );
+  }
+
+  const obviousPins = [
+    "123456",
+    "654321",
+    "111111",
+    "000000",
+    "999999",
+    "123123",
+  ];
+  if (obviousPins.includes(newPin)) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "This PIN is too common. Please choose a more secure PIN.",
+    );
+  }
+
+  user.pin = newPin;
+  await user.save();
+
+  // Notify user of PIN change
+  await emailQueue.add("sendPinChangedEmail", {
+    to: user.email,
+    fullName: user.fullName,
+  });
+
+  logger.info(`Transaction PIN changed for user ${userId}`);
+  return { message: "Transaction PIN changed successfully." };
+};
+
 export const UserServices = {
   getProfile,
   updateProfile,
   uploadAvatar,
   requestAccountDeletion,
+  setPin,
+  changePin,
 };

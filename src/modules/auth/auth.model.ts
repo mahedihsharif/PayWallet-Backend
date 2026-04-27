@@ -142,10 +142,10 @@ userSchema.index({ isDeleted: 1 }); // Filter soft-deleted
 userSchema.index({ createdAt: -1 }); // Sort newest first
 
 // ─── Instance methods ─────────────────────────────────────────────
-
 userSchema.methods.comparePassword = async function (
   candidate: string,
 ): Promise<boolean> {
+  if (!this.password) return false;
   return bcrypt.compare(candidate, this.password);
 };
 

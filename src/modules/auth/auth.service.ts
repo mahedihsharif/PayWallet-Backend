@@ -6,6 +6,7 @@ import { generateAndStoreOtp, verifyOtpCode } from "@modules/otp/otp.service";
 import { OtpPurpose } from "@modules/otp/otp.types";
 import { UserStatus } from "@modules/user/user.types";
 import { CONSTANTS } from "@utils/constants";
+import { handleLoginFail } from "@utils/handleLoginFail";
 import {
   createNewAccessTokenWithRefreshToken,
   createUserTokens,
@@ -155,15 +156,17 @@ const verifyEmail = async (email: string, code: string) => {
 };
 
 // ─── LOGIN ────────────────────────────────────────────────────────
-
 const login = async (
   dto: LoginDTO,
   ipAddress: string,
 ): Promise<LoginResponse> => {
   const { email, password, deviceId, deviceName } = dto;
 
-  // 1. Check if account is temporarily locked (from failed attempts)
-  const failKey = `login:fail:${email}`;
+  // 0. Normalize email (VERY IMPORTANT FIX)
+  const normalizedEmail = email.trim().toLowerCase();
+
+  // 1. Check if account is temporarily locked
+  const failKey = `login:fail:${normalizedEmail}`;
   const failCount = parseInt((await redis.get(failKey)) ?? "0");
 
   if (failCount >= 5) {
@@ -174,33 +177,27 @@ const login = async (
     );
   }
 
-  // 2. Fetch user WITH password (select: false normally excludes it)
-  const user = await User.findOne({ email, isDeleted: false }).select(
-    "+password",
-  );
+  // 2. Fetch user with password
+  const user = await User.findOne({
+    email: normalizedEmail,
+    isDeleted: false,
+  }).select("+password");
 
-  // 3. Verify credentials — SAME error for wrong email or wrong password
-  //    (prevents account enumeration)
-  const passwordValid = user ? await user.comparePassword(password) : false;
-
-  if (!user || !passwordValid) {
-    // Increment fail counter
-    const newCount = await redis.incr(failKey);
-    if (newCount === 1) await redis.expire(failKey, 15 * 60); // 15-min window
-
-    // Warn when getting close to lockout
-    const remaining = 15 - newCount;
-    if (remaining > 0 && remaining <= 2) {
-      throw new AppError(
-        httpStatus.UNAUTHORIZED,
-        `Invalid email or password. ${remaining} attempt${remaining === 1 ? "" : "s"} remaining before lockout.`,
-      );
-    }
-    // MUST THROW (important)
+  // 3. Handle user not found FIRST (important fix)
+  if (!user) {
+    await handleLoginFail(failKey);
     throw new AppError(httpStatus.UNAUTHORIZED, "Invalid email or password");
   }
 
-  // 4. Check account status
+  // 4. Validate password
+  const passwordValid = await user.comparePassword(password);
+
+  if (!passwordValid) {
+    await handleLoginFail(failKey);
+    throw new AppError(httpStatus.UNAUTHORIZED, "Invalid email or password");
+  }
+
+  // 5. Check email verification
   if (!user.isEmailVerified) {
     throw new AppError(
       httpStatus.FORBIDDEN,
@@ -208,6 +205,7 @@ const login = async (
     );
   }
 
+  // 6. Check account status
   if (user.status !== UserStatus.ACTIVE) {
     throw new AppError(
       httpStatus.FORBIDDEN,
@@ -215,17 +213,13 @@ const login = async (
     );
   }
 
-  // 5. Clear failure counter on successful login
+  // 7. Clear login failure counter on success
   await redis.del(failKey);
 
-  // 6. Device management — detect new devices and alert user
-  const knownDevice = user
-    ? user.devices.find((d) => d.deviceId === deviceId)
-    : undefined;
+  // 8. Device handling
+  const knownDevice = user.devices.find((d) => d.deviceId === deviceId);
 
   if (!knownDevice) {
-    // New device — add to list and send security alert
-
     user.devices.push({
       deviceId,
       deviceName,
@@ -234,12 +228,11 @@ const login = async (
       isTrusted: false,
     });
 
-    // Cap device list at 10
     if (user.devices.length > 10) {
-      user.devices.shift(); // Remove oldest
+      user.devices.shift();
     }
 
-    // Non-blocking security alert email
+    // Non-blocking alert
     emailQueue.add("sendNewDeviceAlert", {
       to: user.email,
       fullName: user.fullName,
@@ -255,25 +248,26 @@ const login = async (
       ipAddress,
     });
   } else {
-    // Update last used timestamp
     knownDevice.lastUsed = new Date();
     knownDevice.ipAddress = ipAddress;
   }
 
-  // 7. Update last login metadata
+  // 9. Update login metadata
   user.lastLoginAt = new Date();
   user.lastLoginIp = ipAddress;
   await user.save();
 
-  // 8. Generate token pair
+  // 10. Generate tokens
   const userObj = user.toObject();
+
   const userTokens = await createUserTokens({
     ...userObj,
     _id: String(userObj._id),
   });
-  const { password: pass, ...rest } = userObj;
 
-  logger.info(`User logged in: ${email} from ${ipAddress}`);
+  const { password: _, ...safeUser } = userObj;
+
+  logger.info(`User logged in: ${normalizedEmail} from ${ipAddress}`);
 
   return {
     tokens: {
@@ -291,6 +285,8 @@ const login = async (
     },
   };
 };
+
+// Helper function (IMPORTANT)
 
 const refreshToken = async (refreshToken: string) => {
   const newAccessToken =

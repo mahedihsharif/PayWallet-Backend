@@ -10,7 +10,7 @@ import { UserServices } from "./user.service";
 const getProfile = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const decodedToken = req.user as JwtPayload;
-    const result = await UserServices.getProfile(decodedToken._id);
+    const result = await UserServices.getProfile(String(decodedToken!._id));
     sendResponse(res, {
       statusCode: httpStatus.OK,
       success: true,
@@ -23,8 +23,9 @@ const getProfile = catchAsync(
 // ─── PATCH /api/v1/users/me ───────────────────────────────────────
 export const updateProfile = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
+    const decodedToken = req.user as JwtPayload;
     const profile = await UserServices.updateProfile(
-      String(req.user!._id),
+      String(decodedToken!._id),
       req.body,
     );
     sendResponse(res, {
@@ -44,9 +45,9 @@ const uploadAvatar = catchAsync(
         httpStatus.BAD_REQUEST,
         "Please upload an image file.",
       );
-
+    const decodedToken = req.user as JwtPayload;
     const result = await UserServices.uploadAvatar(
-      String(req.user!._id),
+      String(decodedToken!._id),
       req.file,
     );
 
@@ -63,8 +64,9 @@ const uploadAvatar = catchAsync(
 const requestAccountDeletion = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const { password } = req.body as { password: string };
+    const decodedToken = req.user as JwtPayload;
     const result = await UserServices.requestAccountDeletion(
-      String(req.user!._id),
+      String(decodedToken!._id),
       password,
     );
     sendResponse(res, {
@@ -76,9 +78,38 @@ const requestAccountDeletion = catchAsync(
   },
 );
 
+// ─── POST /api/v1/users/me/pin/set ───────────────────────────────
+const setPin = catchAsync(async (req: Request, res: Response) => {
+  const decodedToken = req.user as JwtPayload;
+  const result = await UserServices.setPin(String(decodedToken!._id), req.body);
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: result.message,
+    data: "",
+  });
+});
+
+// ─── PATCH /api/v1/users/me/pin/change ───────────────────────────
+const changePin = catchAsync(async (req: Request, res: Response) => {
+  const decodedToken = req.user as JwtPayload;
+  const result = await UserServices.changePin(
+    String(decodedToken!._id),
+    req.body,
+  );
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: result.message,
+    data: "",
+  });
+});
+
 export const UserControllers = {
   getProfile,
   updateProfile,
   uploadAvatar,
   requestAccountDeletion,
+  setPin,
+  changePin,
 };
