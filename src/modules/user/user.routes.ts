@@ -7,8 +7,11 @@ import { UserControllers } from "./user.controller";
 import { Role } from "./user.types";
 import {
   changePinSchema,
+  enable2FASchema,
   setPinSchema,
+  submitKycSchema,
   updateProfileSchema,
+  verify2FASchema,
 } from "./user.validation";
 
 const auth = checkAuth();
@@ -45,6 +48,31 @@ router.patch(
   validateRequest(changePinSchema),
   auditLog("PIN_CHANGED", "User"),
   UserControllers.changePin,
+);
+
+// ─── KYC ──────────────────────────────────────────────────────────
+router.post(
+  "/me/kyc",
+  auth,
+  validateRequest(submitKycSchema),
+  UserControllers.submitKyc,
+);
+
+// ─── 2FA ──────────────────────────────────────────────────────────
+router.post(
+  "/me/2fa/setup",
+  auditLog("TWO_FACTOR_ENABLED", "User"),
+  UserControllers.setup2FA,
+);
+router.post(
+  "/me/2fa/enable",
+  validateRequest(enable2FASchema),
+  UserControllers.enable2FA,
+);
+router.post(
+  "/me/2fa/disable",
+  validateRequest(verify2FASchema),
+  UserControllers.disable2FA,
 );
 
 export const UserRoutes = router;

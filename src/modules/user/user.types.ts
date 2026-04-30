@@ -33,6 +33,9 @@ export enum Role {
 
 export enum UserStatus {
   ACTIVE = "ACTIVE",
+  PENDING = "PENDING",
+  VERIFIED = "VERIFIED",
+  REJECTED = "REJECTED",
   SUSPENDED = "SUSPENDED",
   BANNED = "BANNED",
 }

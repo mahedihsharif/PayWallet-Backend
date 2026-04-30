@@ -105,6 +105,63 @@ const changePin = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+// ─── POST /api/v1/users/me/kyc ───────────────────────────────────
+const submitKyc = catchAsync(async (req: Request, res: Response) => {
+  const decodedToken = req.user as JwtPayload;
+  const result = await UserServices.submitKyc(
+    String(decodedToken!._id),
+    req.body,
+  );
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: result.message,
+    data: { status: result.status },
+  });
+});
+
+// ─── POST /api/v1/users/me/2fa/setup ─────────────────────────────
+const setup2FA = catchAsync(async (req: Request, res: Response) => {
+  const decodedToken = req.user as JwtPayload;
+  const result = await UserServices.setup2FA(String(decodedToken!._id));
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message:
+      "Scan the QR code with your authenticator app, then call /2fa/enable to confirm.",
+    data: result,
+  });
+});
+
+// ─── POST /api/v1/users/me/2fa/enable ────────────────────────────
+const enable2FA = catchAsync(async (req: Request, res: Response) => {
+  const { token } = req.body as { token: string };
+  const decodedToken = req.user as JwtPayload;
+  const result = await UserServices.enable2FA(String(decodedToken!._id), token);
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: result.message,
+    data: "",
+  });
+});
+
+// ─── POST /api/v1/users/me/2fa/disable ───────────────────────────
+const disable2FA = catchAsync(async (req: Request, res: Response) => {
+  const { token } = req.body as { token: string };
+  const decodedToken = req.user as JwtPayload;
+  const result = await UserServices.disable2FA(
+    String(decodedToken!._id),
+    token,
+  );
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: result.message,
+    data: "",
+  });
+});
+
 export const UserControllers = {
   getProfile,
   updateProfile,
@@ -112,4 +169,8 @@ export const UserControllers = {
   requestAccountDeletion,
   setPin,
   changePin,
+  submitKyc,
+  setup2FA,
+  enable2FA,
+  disable2FA,
 };

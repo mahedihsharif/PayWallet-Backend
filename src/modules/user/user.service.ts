@@ -1,15 +1,21 @@
 import { deleteImageFromCLoudinary } from "@config/cloudinary.config";
 import logger from "@config/logger.config";
+import eventBus from "@events/eventBus";
 import { emailQueue } from "@jobs/queue.config";
 import { Wallet } from "@modules/wallet/wallet.model";
+import { decrypt, encrypt } from "@utils/crypto";
 import httpStatus from "http-status-codes";
 import { HydratedDocument } from "mongoose";
+import qrcode from "qrcode";
+import speakeasy from "speakeasy";
 import AppError from "src/errorHelpers/AppError";
 import { User } from "../auth/auth.model";
 import {
   ChangePinDTO,
   IUser,
   SetPinDTO,
+  Setup2FAResponse,
+  SubmitKycDTO,
   UpdateProfileDTO,
   UserProfileResponse,
   UserStatus,
@@ -260,6 +266,203 @@ const changePin = async (
   return { message: "Transaction PIN changed successfully." };
 };
 
+// ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ───
+// KYC
+// ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ───
+const submitKyc = async (
+  userId: string,
+  dto: SubmitKycDTO,
+): Promise<{ message: string; status: string }> => {
+  const { documentType, documentUrl, selfieUrl } = dto;
+
+  const user = await User.findById(userId);
+  if (!user) throw new AppError(httpStatus.NOT_FOUND, "User not found.");
+
+  // Only allow submission if unverified or rejected
+  if (user.kyc.status === UserStatus.PENDING) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "Your KYC is already under review. Please wait for the outcome.",
+    );
+  }
+
+  if (user.kyc.status === UserStatus.VERIFIED) {
+    throw new AppError(httpStatus.BAD_REQUEST, "Your KYC is already verified.");
+  }
+
+  // Update KYC fields
+  user.kyc.status = UserStatus.PENDING;
+  user.kyc.documentType = documentType;
+  user.kyc.documentUrl = documentUrl;
+  user.kyc.selfieUrl = selfieUrl;
+  user.kyc.submittedAt = new Date();
+  user.kyc.rejectionReason = undefined; // Clear any previous rejection
+  await user.save();
+
+  // Notify admin team (email to admin)
+  await emailQueue.add("sendKycSubmittedAdminAlert", {
+    userId: String(user._id),
+    fullName: user.fullName,
+    email: user.email,
+    documentType,
+    submittedAt: new Date().toISOString(),
+  });
+
+  // Notify user that submission was received
+  await emailQueue.add("sendKycSubmittedUserConfirmation", {
+    to: user.email,
+    fullName: user.fullName,
+  });
+
+  eventBus.emit("kyc_submitted", {
+    userId: String(user._id),
+    email: user.email,
+  });
+
+  logger.info(`KYC submitted by user ${userId}`);
+  return {
+    message:
+      "KYC documents submitted successfully. Review typically takes 1-2 business days.",
+    status: UserStatus.PENDING,
+  };
+};
+
+// ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ───
+// TWO-FACTOR AUTHENTICATION
+// ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ───
+const setup2FA = async (userId: string): Promise<Setup2FAResponse> => {
+  const user = await User.findById(userId).select("email isTwoFactorEnabled");
+  if (!user) throw new AppError(httpStatus.NOT_FOUND, "User not found");
+
+  if (user.isTwoFactorEnabled) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "2FA is already enabled on your account.",
+    );
+  }
+
+  // Generate a TOTP secret
+  const secret = speakeasy.generateSecret({
+    name: `PayWallet (${user.email})`,
+    issuer: "PayWallet",
+    length: 20,
+  });
+
+  // Generate QR code as base64 data URL
+  const qrCodeUrl = await qrcode.toDataURL(secret.otpauth_url!);
+
+  // Generate one-time backup codes
+  const backupCodes = Array.from(
+    { length: 8 },
+    () =>
+      `${Math.random().toString(36).slice(2, 6).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+  );
+
+  // Store encrypted secret temporarily (user must verify before enabling)
+  // We store it but set isTwoFactorEnabled = false until verified
+  await User.findByIdAndUpdate(userId, {
+    twoFactorSecret: encrypt(secret.base32),
+    isTwoFactorEnabled: false,
+  });
+
+  return {
+    secret: secret.base32,
+    qrCodeUrl,
+    backupCodes,
+  };
+};
+
+const enable2FA = async (
+  userId: string,
+  token: string,
+): Promise<{ message: string }> => {
+  const user = await User.findById(userId).select(
+    "+twoFactorSecret isTwoFactorEnabled",
+  );
+  if (!user) throw new AppError(httpStatus.NOT_FOUND, "User not found");
+
+  if (user.isTwoFactorEnabled) {
+    throw new AppError(httpStatus.BAD_REQUEST, "2FA is already enabled.");
+  }
+
+  if (!user.twoFactorSecret) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "Please call /2fa/setup first to generate a secret.",
+    );
+  }
+
+  // Decrypt and verify the TOTP token
+  const secret = decrypt(user.twoFactorSecret);
+  const isValid = speakeasy.totp.verify({
+    secret,
+    encoding: "base32",
+    token,
+    window: 1, // ±30 seconds clock drift
+  });
+
+  if (!isValid) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "Invalid verification code. Please check your authenticator app and try again.",
+    );
+  }
+
+  await User.findByIdAndUpdate(userId, { isTwoFactorEnabled: true });
+
+  await emailQueue.add("send2FAEnabledEmail", {
+    to: user.email,
+    fullName: user.fullName,
+  });
+
+  logger.info(`2FA enabled for user ${userId}`);
+  return {
+    message: "2FA has been enabled successfully. Keep your backup codes safe.",
+  };
+};
+
+const disable2FA = async (
+  userId: string,
+  token: string,
+): Promise<{ message: string }> => {
+  const user = await User.findById(userId).select(
+    "+twoFactorSecret isTwoFactorEnabled",
+  );
+  if (!user) throw new AppError(httpStatus.NOT_FOUND, "User not found");
+
+  if (!user.isTwoFactorEnabled) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "2FA is not enabled on your account.",
+    );
+  }
+
+  const secret = decrypt(user.twoFactorSecret!);
+  const isValid = speakeasy.totp.verify({
+    secret,
+    encoding: "base32",
+    token,
+    window: 1,
+  });
+
+  if (!isValid) {
+    throw new AppError(httpStatus.BAD_REQUEST, "Invalid verification code.");
+  }
+
+  await User.findByIdAndUpdate(userId, {
+    isTwoFactorEnabled: false,
+    twoFactorSecret: undefined,
+  });
+
+  await emailQueue.add("send2FADisabledEmail", {
+    to: user.email,
+    fullName: user.fullName,
+  });
+
+  logger.info(`2FA disabled for user ${userId}`);
+  return { message: "2FA has been disabled." };
+};
+
 export const UserServices = {
   getProfile,
   updateProfile,
@@ -267,4 +470,8 @@ export const UserServices = {
   requestAccountDeletion,
   setPin,
   changePin,
+  submitKyc,
+  setup2FA,
+  enable2FA,
+  disable2FA,
 };

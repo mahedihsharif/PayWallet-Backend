@@ -62,9 +62,9 @@ const envSchema = z.object({
 
   // App
   FRONTEND_URL: z.url().default("http://localhost:5173"),
-  // ENCRYPTION_KEY: z
-  //   .string()
-  //   .length(32, "ENCRYPTION_KEY must be exactly 32 chars"),
+  ENCRYPTION_KEY: z
+    .string()
+    .length(64, "ENCRYPTION_KEY must be exactly 64 hex chars (32 bytes)"),
 });
 
 // ─── Parse and validate on startup ───────────────────────────────
