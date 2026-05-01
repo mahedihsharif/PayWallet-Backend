@@ -38,6 +38,8 @@ export enum UserStatus {
   REJECTED = "REJECTED",
   SUSPENDED = "SUSPENDED",
   BANNED = "BANNED",
+  APPROVED = "APPROVED",
+  UNVERIFIED = "UNVERIFIED",
 }
 // ─── Main document type ───────────────────────────────────────────
 

@@ -3,11 +3,13 @@ import { auditLog } from "@middlewares/auditLogger.middleware";
 import { checkAuth } from "@middlewares/checkAuth";
 import validateRequest from "@middlewares/validateRequest";
 import { Router } from "express";
+import Joi from "joi";
 import { UserControllers } from "./user.controller";
-import { Role } from "./user.types";
+import { Role, UserStatus } from "./user.types";
 import {
   changePinSchema,
   enable2FASchema,
+  reviewKycSchema,
   setPinSchema,
   submitKycSchema,
   updateProfileSchema,
@@ -61,18 +63,51 @@ router.post(
 // ─── 2FA ──────────────────────────────────────────────────────────
 router.post(
   "/me/2fa/setup",
+  auth,
   auditLog("TWO_FACTOR_ENABLED", "User"),
   UserControllers.setup2FA,
 );
 router.post(
   "/me/2fa/enable",
+  auth,
   validateRequest(enable2FASchema),
   UserControllers.enable2FA,
 );
 router.post(
   "/me/2fa/disable",
+  auth,
   validateRequest(verify2FASchema),
   UserControllers.disable2FA,
+);
+
+// ─── Devices ──────────────────────────────────────────────────────
+router.get("/me/devices", auth, UserControllers.getDevices);
+router.delete("/me/devices/:deviceId", auth, UserControllers.removeDevice);
+router.patch("/me/devices/:deviceId/trust", auth, UserControllers.trustDevice);
+
+// ─── Admin routes ─────────────────────────────────────────────────
+router.get("/", checkAdmin, UserControllers.getAllUsers);
+
+router.patch(
+  "/:userId/status",
+  checkAdmin,
+  validateRequest(
+    Joi.object({
+      status: Joi.string()
+        .valid(UserStatus.ACTIVE, UserStatus.SUSPENDED, UserStatus.BANNED)
+        .required(),
+    }),
+  ),
+  auditLog("USER_BANNED", "User"),
+  UserControllers.setUserStatus,
+);
+
+router.patch(
+  "/:userId/kyc/review",
+  checkAdmin,
+  validateRequest(reviewKycSchema),
+  auditLog("KYC_APPROVED", "User"),
+  UserControllers.reviewKyc,
 );
 
 export const UserRoutes = router;

@@ -2,7 +2,9 @@ import { deleteImageFromCLoudinary } from "@config/cloudinary.config";
 import logger from "@config/logger.config";
 import eventBus from "@events/eventBus";
 import { emailQueue } from "@jobs/queue.config";
+import { AuditLog } from "@modules/auditLog/auditLog.model";
 import { Wallet } from "@modules/wallet/wallet.model";
+import { CONSTANTS } from "@utils/constants";
 import { decrypt, encrypt } from "@utils/crypto";
 import httpStatus from "http-status-codes";
 import { HydratedDocument } from "mongoose";
@@ -12,6 +14,7 @@ import AppError from "src/errorHelpers/AppError";
 import { User } from "../auth/auth.model";
 import {
   ChangePinDTO,
+  DeviceResponse,
   IUser,
   SetPinDTO,
   Setup2FAResponse,
@@ -327,6 +330,87 @@ const submitKyc = async (
   };
 };
 
+// ─── Admin: approve or reject KYC ────────────────────────────────
+const reviewKyc = async (
+  targetUserId: string,
+  action: UserStatus.APPROVED | UserStatus.REJECTED,
+  adminId: string,
+  rejectionReason?: string,
+): Promise<{ message: string }> => {
+  const user = await User.findById(targetUserId);
+  if (!user) throw new AppError(httpStatus.NOT_FOUND, "User not found");
+
+  if (user.kyc.status !== UserStatus.PENDING) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      `Cannot review KYC that is in '${user.kyc.status}' status. Only 'pending' submissions can be reviewed.`,
+    );
+  }
+
+  if (action === UserStatus.APPROVED) {
+    user.kyc.status = UserStatus.VERIFIED;
+    user.kyc.reviewedAt = new Date();
+    user.kyc.reviewedBy = adminId as unknown as typeof user.kyc.reviewedBy;
+
+    // Upgrade wallet limits on KYC approval
+    await Wallet.findOneAndUpdate(
+      { userId: targetUserId },
+      {
+        $set: {
+          "limits.dailyDebit": CONSTANTS.VERIFIED_DAILY_LIMIT,
+          "limits.weeklyDebit": CONSTANTS.VERIFIED_DAILY_LIMIT * 5,
+          "limits.monthlyDebit": CONSTANTS.VERIFIED_DAILY_LIMIT * 15,
+          "limits.singleTransactionMax": CONSTANTS.VERIFIED_DAILY_LIMIT,
+        },
+      },
+    );
+
+    // Also update user-level limits
+    user.limits.dailyLimit = CONSTANTS.VERIFIED_DAILY_LIMIT;
+    user.limits.monthlyLimit = CONSTANTS.VERIFIED_DAILY_LIMIT * 15;
+
+    await emailQueue.add("sendKycApprovedEmail", {
+      to: user.email,
+      fullName: user.fullName,
+    });
+  } else {
+    if (!rejectionReason) {
+      throw new AppError(
+        httpStatus.BAD_REQUEST,
+        "Rejection reason is required.",
+      );
+    }
+    user.kyc.status = UserStatus.REJECTED;
+    user.kyc.reviewedAt = new Date();
+    user.kyc.reviewedBy = adminId as unknown as typeof user.kyc.reviewedBy;
+    user.kyc.rejectionReason = rejectionReason;
+
+    await emailQueue.add("sendKycRejectedEmail", {
+      to: user.email,
+      fullName: user.fullName,
+      rejectionReason,
+    });
+  }
+
+  await user.save();
+
+  // Audit log
+  await AuditLog.create({
+    actorId: adminId,
+    actorRole: "ADMIN",
+    action: action === UserStatus.APPROVED ? "KYC_APPROVED" : "KYC_REJECTED",
+    targetType: "User",
+    targetId: targetUserId,
+    description: `KYC ${action}d for user ${user.email}`,
+    ipAddress: "admin-action",
+    userAgent: "admin-panel",
+    after: { kycStatus: user.kyc.status, rejectionReason },
+  });
+
+  logger.info(`KYC ${action}d for user ${targetUserId} by admin ${adminId}`);
+  return { message: `KYC ${action}d successfully.` };
+};
+
 // ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ───
 // TWO-FACTOR AUTHENTICATION
 // ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ───
@@ -393,7 +477,7 @@ const enable2FA = async (
   }
 
   // Decrypt and verify the TOTP token
-  const secret = decrypt(user.twoFactorSecret);
+  const secret = decrypt(user.twoFactorSecret).trim();
   const isValid = speakeasy.totp.verify({
     secret,
     encoding: "base32",
@@ -437,7 +521,7 @@ const disable2FA = async (
     );
   }
 
-  const secret = decrypt(user.twoFactorSecret!);
+  const secret = decrypt(user.twoFactorSecret!).trim();
   const isValid = speakeasy.totp.verify({
     secret,
     encoding: "base32",
@@ -451,7 +535,7 @@ const disable2FA = async (
 
   await User.findByIdAndUpdate(userId, {
     isTwoFactorEnabled: false,
-    twoFactorSecret: undefined,
+    $unset: { twoFactorSecret: 1 },
   });
 
   await emailQueue.add("send2FADisabledEmail", {
@@ -461,6 +545,149 @@ const disable2FA = async (
 
   logger.info(`2FA disabled for user ${userId}`);
   return { message: "2FA has been disabled." };
+};
+
+// ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ───
+// DEVICE MANAGEMENT
+// ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ─── ───
+const getDevices = async (userId: string): Promise<DeviceResponse[]> => {
+  const user = await User.findById(userId).select("devices");
+  if (!user) throw new AppError(httpStatus.NOT_FOUND, "User not found");
+
+  return user.devices.map((d) => ({
+    deviceId: d.deviceId,
+    deviceName: d.deviceName,
+    ipAddress: d.ipAddress,
+    lastUsed: d.lastUsed,
+    isTrusted: d.isTrusted,
+  }));
+};
+
+const removeDevice = async (
+  userId: string,
+  deviceId: string,
+): Promise<{ message: string }> => {
+  const user = await User.findById(userId);
+  if (!user) throw new AppError(httpStatus.NOT_FOUND, "User not found");
+
+  const deviceIndex = user.devices.findIndex((d) => d.deviceId === deviceId);
+  if (deviceIndex === -1)
+    throw new AppError(httpStatus.NOT_FOUND, "Device not found");
+
+  user.devices.splice(deviceIndex, 1);
+  await user.save();
+
+  return { message: "Device removed successfully." };
+};
+
+const trustDevice = async (
+  userId: string,
+  deviceId: string,
+): Promise<{ message: string }> => {
+  const result = await User.findOneAndUpdate(
+    { _id: userId, "devices.deviceId": deviceId },
+    { $set: { "devices.$.isTrusted": true } },
+  );
+
+  if (!result) throw new AppError(httpStatus.NOT_FOUND, "Device not found");
+  return { message: "Device marked as trusted." };
+};
+
+// ─── Admin: get all users ─────────────────────────────────────────
+const getAllUsers = async (filters: {
+  page: number;
+  limit: number;
+  status?: string;
+  kycStatus?: string;
+  role?: string;
+  search?: string;
+}): Promise<{ users: UserProfileResponse[]; total: number }> => {
+  const { page, limit, status, kycStatus, role, search } = filters;
+
+  const query: Record<string, unknown> = { isDeleted: false };
+  if (status) query.status = status;
+  if (kycStatus) query["kyc.status"] = kycStatus;
+  if (role) query.role = role;
+  if (search) {
+    query.$or = [
+      { fullName: { $regex: search, $options: "i" } },
+      { email: { $regex: search, $options: "i" } },
+      { phone: { $regex: search, $options: "i" } },
+    ];
+  }
+
+  const [users, total] = await Promise.all([
+    User.find(query)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean(),
+    User.countDocuments(query),
+  ]);
+
+  return {
+    users: users.map((u) => ({
+      _id: String(u._id),
+      fullName: u.fullName,
+      email: u.email,
+      phone: u.phone,
+      role: u.role,
+      status: u.status,
+      avatarUrl: u.avatarUrl ?? null,
+      isEmailVerified: u.isEmailVerified,
+      isTwoFactorEnabled: u.isTwoFactorEnabled,
+      kyc: {
+        status: u.kyc.status,
+        documentType: u.kyc.documentType,
+        submittedAt: u.kyc.submittedAt,
+        reviewedAt: u.kyc.reviewedAt,
+        rejectionReason: u.kyc.rejectionReason,
+      },
+      limits: u.limits,
+      lastLoginAt: u.lastLoginAt,
+      lastLoginIp: u.lastLoginIp,
+      createdAt: u.createdAt,
+    })),
+    total,
+  };
+};
+
+// ─── Admin: ban / unban user ──────────────────────────────────────
+const setUserStatus = async (
+  targetUserId: string,
+  status: UserStatus.ACTIVE | UserStatus.SUSPENDED | UserStatus.BANNED,
+  adminId: string,
+): Promise<{ message: string }> => {
+  const user = await User.findByIdAndUpdate(
+    targetUserId,
+    { status },
+    { new: true },
+  );
+
+  if (!user) throw new AppError(httpStatus.NOT_FOUND, "User not found");
+
+  await AuditLog.create({
+    actorId: adminId,
+    actorRole: "ADMIN",
+    action: status === UserStatus.BANNED ? "USER_BANNED" : "USER_UNBANNED",
+    targetType: "User",
+    targetId: targetUserId,
+    description: `User ${user.email} ${status}`,
+    ipAddress: "admin-action",
+    userAgent: "admin-panel",
+  });
+
+  if (status === UserStatus.BANNED) {
+    await emailQueue.add("sendAccountBannedEmail", {
+      to: user.email,
+      fullName: user.fullName,
+    });
+  }
+
+  logger.info(
+    `User ${targetUserId} status set to ${status} by admin ${adminId}`,
+  );
+  return { message: `User account ${status} successfully.` };
 };
 
 export const UserServices = {
@@ -474,4 +701,10 @@ export const UserServices = {
   setup2FA,
   enable2FA,
   disable2FA,
+  getDevices,
+  removeDevice,
+  trustDevice,
+  getAllUsers,
+  setUserStatus,
+  reviewKyc,
 };

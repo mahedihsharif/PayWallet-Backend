@@ -5,6 +5,7 @@ import AppError from "src/errorHelpers/AppError";
 import catchAsync from "../../utils/catchAsync";
 import sendResponse from "../../utils/sendResponse";
 import { UserServices } from "./user.service";
+import { UserStatus } from "./user.types";
 
 // ─── GET /api/v1/users/me ─────────────────────────────────────────
 const getProfile = catchAsync(
@@ -162,6 +163,131 @@ const disable2FA = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+// ─── GET /api/v1/users/me/devices ────────────────────────────────
+const getDevices = catchAsync(async (req: Request, res: Response) => {
+  const decodedToken = req.user as JwtPayload;
+  const devices = await UserServices.getDevices(String(decodedToken!._id));
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Devices retrieved.",
+    data: devices,
+  });
+});
+
+// ─── DELETE /api/v1/users/me/devices/:deviceId ───────────────────
+const removeDevice = catchAsync(async (req: Request, res: Response) => {
+  const decodedToken = req.user as JwtPayload;
+  const result = await UserServices.removeDevice(
+    String(decodedToken!._id),
+    req.params.deviceId as string,
+  );
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: result.message,
+    data: "",
+  });
+});
+
+// ─── PATCH /api/v1/users/me/devices/:deviceId/trust ──────────────
+const trustDevice = catchAsync(async (req: Request, res: Response) => {
+  const decodedToken = req.user as JwtPayload;
+  const result = await UserServices.trustDevice(
+    String(decodedToken!._id),
+    req.params.deviceId as string,
+  );
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: result.message,
+    data: "",
+  });
+});
+
+// ─── ADMIN: GET /api/v1/users ─────────────────────────────────────
+const getAllUsers = catchAsync(async (req: Request, res: Response) => {
+  const {
+    page = "1",
+    limit = "20",
+    status,
+    kycStatus,
+    role,
+    search,
+  } = req.query as {
+    page?: string;
+    limit?: string;
+    status?: string;
+    kycStatus?: string;
+    role?: string;
+    search?: string;
+  };
+
+  const { users, total } = await UserServices.getAllUsers({
+    page: parseInt(String(page)),
+    limit: parseInt(String(limit)),
+    status: status as string | undefined,
+    kycStatus: kycStatus as string | undefined,
+    role: role as string | undefined,
+    search: search as string | undefined,
+  });
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Users retrieved.",
+    data: users,
+    meta: {
+      page: parseInt(String(page)),
+      limit: parseInt(String(limit)),
+      totalPage: Math.ceil(total / parseInt(String(limit))),
+      total,
+    },
+  });
+});
+
+// ─── ADMIN: PATCH /api/v1/users/:userId/status ───────────────────
+const setUserStatus = catchAsync(async (req: Request, res: Response) => {
+  const { userId } = req.params as { userId: string };
+  const { status } = req.body as {
+    status: UserStatus.ACTIVE | UserStatus.SUSPENDED | UserStatus.BANNED;
+  };
+  const decodedToken = req.user as JwtPayload;
+  const result = await UserServices.setUserStatus(
+    userId,
+    status,
+    String(decodedToken!._id),
+  );
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: result.message,
+    data: "",
+  });
+});
+
+// ─── ADMIN: KYC review ───────────────────────────────────────────
+const reviewKyc = catchAsync(async (req: Request, res: Response) => {
+  const { userId } = req.params as { userId: string };
+  const { action, rejectionReason } = req.body as {
+    action: UserStatus.APPROVED | UserStatus.REJECTED;
+    rejectionReason?: string;
+  };
+  const decodedToken = req.user as JwtPayload;
+  const result = await UserServices.reviewKyc(
+    userId,
+    action,
+    String(decodedToken!._id),
+    rejectionReason,
+  );
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: result.message,
+    data: "",
+  });
+});
+
 export const UserControllers = {
   getProfile,
   updateProfile,
@@ -173,4 +299,10 @@ export const UserControllers = {
   setup2FA,
   enable2FA,
   disable2FA,
+  getDevices,
+  removeDevice,
+  trustDevice,
+  getAllUsers,
+  setUserStatus,
+  reviewKyc,
 };

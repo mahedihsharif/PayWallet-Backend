@@ -117,6 +117,58 @@ const templates = {
       </div>
     `,
   }),
+  send2FAEnabledEmail: (data: { fullName: string }) => ({
+    subject: "Two-Factor Authentication Enabled on Your PayWallet Account",
+    html: `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #1a1a2e;">Two-Factor Authentication Enabled</h2>
+
+      <p>Hi ${data.fullName},</p>
+
+      <p>
+        Great news — Two-Factor Authentication (2FA) has been successfully enabled on your PayWallet account.
+      </p>
+
+      <p>
+        From now on, you will need to enter a verification code from your authenticator app every time you log in. This adds an extra layer of security to your account.
+      </p>
+
+      <p style="color: #38a169;">
+        Your account is now significantly more secure.
+      </p>
+
+      <hr style="margin: 20px 0;" />
+
+      <p style="font-size: 12px; color: #666;">
+        If you did not enable this feature, please secure your account immediately by changing your password and contacting support.
+      </p>
+    </div>
+  `,
+  }),
+  send2FADisabledEmail: (data: { fullName: string }) => ({
+    subject: "Your PayWallet 2FA has been disabled",
+    html: `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #1a1a2e;">Two-Factor Authentication Disabled</h2>
+
+      <p>Hi ${data.fullName},</p>
+
+      <p>
+        Your Two-Factor Authentication (2FA) has been successfully disabled on your PayWallet account.
+      </p>
+
+      <p style="color: #e53e3e;">
+        If you did not request this change, your account may be at risk. Please secure your account immediately by resetting your password and contacting support.
+      </p>
+
+      <hr style="margin: 20px 0;" />
+
+      <p style="font-size: 12px; color: #666;">
+        For your security, we recommend enabling 2FA again as soon as possible.
+      </p>
+    </div>
+  `,
+  }),
 };
 
 // ─── The worker — processes jobs from the emailQueue ─────────────

@@ -90,7 +90,7 @@ const register = async (payload: RegisterDTO) => {
     // 6. Queue the verification email asynchronously
     //    Do NOT await — let it run in the background
 
-    emailQueue.add(
+    await emailQueue.add(
       "sendVerificationEmail",
       {
         to: user.email,
@@ -233,7 +233,7 @@ const login = async (
     }
 
     // Non-blocking alert
-    emailQueue.add("sendNewDeviceAlert", {
+    await emailQueue.add("sendNewDeviceAlert", {
       to: user.email,
       fullName: user.fullName,
       deviceName,
